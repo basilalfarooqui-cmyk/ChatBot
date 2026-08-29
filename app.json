@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "SIH Chatbot",
+    "slug": "sih-chatbot",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "sihchatbot",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sih26088.chatbot"
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "package": "com.sih26088.chatbot",
+      "permissions": ["android.permission.RECORD_AUDIO"]
+    },
+    "web": {
+      "output": "static"
+    },
+    "plugins": ["expo-router", "expo-dev-client"]
+  }
+}
