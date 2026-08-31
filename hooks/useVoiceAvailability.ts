@@ -38,7 +38,7 @@ export function useVoiceAvailability(
         const sttModuleAvailable = await Voice.isAvailable();
         if (sttModuleAvailable) {
           if (Platform.OS === 'android') {
-            const services: string[] = await Voice.getSpeechRecognitionServices();
+            const services = await Voice.getSpeechRecognitionServices();
             stt = reliable && Array.isArray(services) && services.length > 0;
           } else {
             stt = reliable;
