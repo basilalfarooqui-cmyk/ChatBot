@@ -14,11 +14,18 @@
     "android": {
       "edgeToEdgeEnabled": true,
       "package": "com.sih26088.chatbot",
-      "permissions": ["android.permission.RECORD_AUDIO"]
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static"
     },
-    "plugins": ["expo-router", "expo-dev-client"]
+    "plugins": [
+      "expo-router",
+      "expo-dev-client",
+      "expo-font",
+      "expo-asset"
+    ]
   }
 }
