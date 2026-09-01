@@ -39,3 +39,8 @@ AS $$
   ORDER BY documents.embedding <=> query_embedding
   LIMIT match_count;
 $$;
+
+-- Supabase's PostgREST layer caches the schema and won't see a brand-new
+-- function until it reloads. CREATE/REPLACE FUNCTION above doesn't trigger
+-- that on its own -- this does.
+NOTIFY pgrst, 'reload schema';
