@@ -3,6 +3,7 @@ import Voice from '@react-native-voice/voice';
 
 export type SpeechToText = {
   isListening: boolean;
+  isTranscribing: boolean;
   start: () => Promise<boolean>;
   stop: () => Promise<void>;
 };
@@ -12,6 +13,7 @@ export function useSpeechToText(
   onResult: (text: string) => void
 ): SpeechToText {
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
 
@@ -19,9 +21,18 @@ export function useSpeechToText(
     Voice.onSpeechResults = event => {
       const text = event.value?.[0];
       if (text) onResultRef.current(text);
+      setIsTranscribing(false);
     };
-    Voice.onSpeechError = () => setIsListening(false);
-    Voice.onSpeechEnd = () => setIsListening(false);
+    Voice.onSpeechError = () => {
+      setIsListening(false);
+      setIsTranscribing(false);
+    };
+    // The recognizer stops listening on its own (e.g. after silence) before
+    // results arrive -- that gap is the "transcribing" state, not idle.
+    Voice.onSpeechEnd = () => {
+      setIsListening(false);
+      setIsTranscribing(true);
+    };
 
     return () => {
       Voice.destroy().then(Voice.removeAllListeners).catch(() => {});
@@ -33,6 +44,7 @@ export function useSpeechToText(
     try {
       await Voice.start(voiceLocale);
       setIsListening(true);
+      setIsTranscribing(false);
       return true;
     } catch {
       setIsListening(false);
@@ -47,8 +59,9 @@ export function useSpeechToText(
       // best effort
     } finally {
       setIsListening(false);
+      setIsTranscribing(true);
     }
   }, []);
 
-  return { isListening, start, stop };
+  return { isListening, isTranscribing, start, stop };
 }

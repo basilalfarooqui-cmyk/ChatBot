@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, within } from '@testing-library/react-native';
 import ChatBubble from '../ChatBubble';
 import type { ChatMessage } from '../../store/chatStore';
 
@@ -27,5 +27,14 @@ describe('ChatBubble', () => {
   it('does not show a play button when showPlay is false', () => {
     render(<ChatBubble message={assistantMessage} showPlay={false} onPlay={jest.fn()} />);
     expect(screen.queryByTestId('play-button')).toBeNull();
+  });
+
+  it('shows a distinct icon while this message is speaking, and tapping it still fires onPlay (parent decides stop vs start)', () => {
+    const onPlay = jest.fn();
+    render(<ChatBubble message={assistantMessage} showPlay isSpeaking onPlay={onPlay} />);
+    const button = screen.getByTestId('play-button');
+    expect(within(button).UNSAFE_getByProps({ name: 'stop-circle' })).toBeTruthy();
+    fireEvent.press(button);
+    expect(onPlay).toHaveBeenCalled();
   });
 });

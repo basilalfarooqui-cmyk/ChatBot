@@ -12,6 +12,7 @@ const mockSendMessage = jest.fn(() => Promise.resolve());
 const mockStartNewConversation = jest.fn();
 let mockConversations: any[] = [];
 let mockActiveId: string | null = null;
+let mockIsSending = false;
 
 jest.mock('../../../store/chatStore', () => ({
   useChatStore: (selector: any) =>
@@ -20,17 +21,23 @@ jest.mock('../../../store/chatStore', () => ({
       activeConversationId: mockActiveId,
       sendMessage: mockSendMessage,
       startNewConversation: mockStartNewConversation,
+      isSending: mockIsSending,
     }),
 }));
 
 jest.mock('../../../hooks/useVoiceAvailability', () => ({
   useVoiceAvailability: () => ({ sttAvailable: true, ttsAvailable: true, checked: true }),
 }));
+
+const mockSpeak = jest.fn(() => Promise.resolve(true));
+const mockStopSpeaking = jest.fn(() => Promise.resolve());
+let mockIsSpeaking = false;
+
 jest.mock('../../../hooks/useSpeechToText', () => ({
-  useSpeechToText: () => ({ isListening: false, start: jest.fn(), stop: jest.fn() }),
+  useSpeechToText: () => ({ isListening: false, isTranscribing: false, start: jest.fn(), stop: jest.fn() }),
 }));
 jest.mock('../../../hooks/useTextToSpeech', () => ({
-  useTextToSpeech: () => ({ isSpeaking: false, speak: jest.fn(), stop: jest.fn() }),
+  useTextToSpeech: () => ({ isSpeaking: mockIsSpeaking, speak: mockSpeak, stop: mockStopSpeaking }),
 }));
 
 import ChatScreen from '../chat';
@@ -40,8 +47,12 @@ describe('ChatScreen', () => {
     mockSendMessage.mockClear();
     mockStartNewConversation.mockClear();
     mockPush.mockClear();
+    mockSpeak.mockClear();
+    mockStopSpeaking.mockClear();
     mockConversations = [];
     mockActiveId = null;
+    mockIsSending = false;
+    mockIsSpeaking = false;
   });
 
   it('sends the typed message and clears the input', async () => {
@@ -85,5 +96,52 @@ describe('ChatScreen', () => {
     await waitFor(() => expect(screen.getByTestId('menu-history')).toBeTruthy());
     fireEvent.press(screen.getByTestId('menu-history'));
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/(main)/history'));
+  });
+
+  it('shows the thinking indicator while a message is sending', () => {
+    mockIsSending = true;
+    render(<ChatScreen />);
+    expect(screen.getByTestId('thinking-indicator')).toBeTruthy();
+  });
+
+  it('does not show the thinking indicator when not sending', () => {
+    mockIsSending = false;
+    render(<ChatScreen />);
+    expect(screen.queryByTestId('thinking-indicator')).toBeNull();
+  });
+
+  it('tapping play on an assistant message starts speaking it', () => {
+    mockActiveId = 'c1';
+    mockConversations = [
+      {
+        id: 'c1',
+        title: 'hi',
+        language: 'en',
+        updatedAt: 1,
+        messages: [{ id: 'm1', role: 'assistant', text: 'stub reply', timestamp: 1 }],
+      },
+    ];
+    render(<ChatScreen />);
+    fireEvent.press(screen.getByTestId('play-button'));
+    expect(mockSpeak).toHaveBeenCalled();
+  });
+
+  it('tapping play again on the currently-speaking message stops it instead of restarting', () => {
+    mockActiveId = 'c1';
+    mockConversations = [
+      {
+        id: 'c1',
+        title: 'hi',
+        language: 'en',
+        updatedAt: 1,
+        messages: [{ id: 'm1', role: 'assistant', text: 'stub reply', timestamp: 1 }],
+      },
+    ];
+    render(<ChatScreen />);
+    fireEvent.press(screen.getByTestId('play-button'));
+    mockSpeak.mockClear();
+    fireEvent.press(screen.getByTestId('play-button'));
+    expect(mockStopSpeaking).toHaveBeenCalled();
+    expect(mockSpeak).not.toHaveBeenCalled();
   });
 });

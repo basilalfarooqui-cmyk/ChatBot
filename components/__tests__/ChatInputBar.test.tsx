@@ -83,4 +83,23 @@ describe('ChatInputBar', () => {
     fireEvent.press(screen.getByTestId('mic-button'));
     expect(onMicPress).toHaveBeenCalled();
   });
+
+  it('disables the mic and input, and shows the transcribing placeholder, while transcribing', () => {
+    const onMicPress = jest.fn();
+    render(
+      <ChatInputBar
+        value=""
+        onChangeText={jest.fn()}
+        onSend={jest.fn()}
+        onMicPress={onMicPress}
+        micEnabled
+        isListening={false}
+        isTranscribing
+      />
+    );
+    fireEvent.press(screen.getByTestId('mic-button'));
+    expect(onMicPress).not.toHaveBeenCalled();
+    expect(screen.getByTestId('chat-input').props.editable).toBe(false);
+    expect(screen.getByTestId('chat-input').props.placeholder).toBe('transcribing');
+  });
 });

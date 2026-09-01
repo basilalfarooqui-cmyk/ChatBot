@@ -44,4 +44,39 @@ describe('useSpeechToText', () => {
     });
     expect(onResult).toHaveBeenCalledWith('नमस्ते');
   });
+
+  it('enters isTranscribing when the recognizer ends on its own before a result arrives', async () => {
+    const { result } = renderHook(() => useSpeechToText('hi-IN', jest.fn()));
+    await waitFor(() => expect(typeof (Voice as any).onSpeechEnd).toBe('function'));
+    act(() => {
+      (Voice as any).onSpeechEnd();
+    });
+    expect(result.current.isListening).toBe(false);
+    expect(result.current.isTranscribing).toBe(true);
+  });
+
+  it('clears isTranscribing once a result arrives', async () => {
+    const { result } = renderHook(() => useSpeechToText('hi-IN', jest.fn()));
+    act(() => {
+      (Voice as any).onSpeechEnd();
+    });
+    expect(result.current.isTranscribing).toBe(true);
+    act(() => {
+      (Voice as any).onSpeechResults({ value: ['hello'] });
+    });
+    expect(result.current.isTranscribing).toBe(false);
+  });
+
+  it('stop() moves from listening to transcribing, not to idle', async () => {
+    const { result } = renderHook(() => useSpeechToText('hi-IN', jest.fn()));
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.isListening).toBe(true);
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(result.current.isListening).toBe(false);
+    expect(result.current.isTranscribing).toBe(true);
+  });
 });

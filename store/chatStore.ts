@@ -21,6 +21,7 @@ type ChatState = {
   conversations: Conversation[];
   activeConversationId: string | null;
   hydrated: boolean;
+  isSending: boolean;
   hydrate: () => Promise<void>;
   startNewConversation: (language: string) => string;
   sendMessage: (text: string, language: string) => Promise<void>;
@@ -41,6 +42,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
   hydrated: false,
+  isSending: false,
 
   hydrate: async () => {
     const raw = await AsyncStorage.getItem(CHAT_HISTORY_KEY);
@@ -88,26 +90,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { ...c, title, messages: [...c.messages, userMessage], updatedAt: Date.now() };
     });
 
-    set({ conversations, activeConversationId: activeId });
+    set({ conversations, activeConversationId: activeId, isSending: true });
     void persist(conversations);
 
-    const reply = await getAIResponse(text, language);
+    try {
+      const reply = await getAIResponse(text, language);
 
-    const assistantMessage: ChatMessage = {
-      id: makeId(),
-      role: 'assistant',
-      text: reply,
-      timestamp: Date.now(),
-    };
+      const assistantMessage: ChatMessage = {
+        id: makeId(),
+        role: 'assistant',
+        text: reply,
+        timestamp: Date.now(),
+      };
 
-    conversations = get().conversations.map(c =>
-      c.id === activeId
-        ? { ...c, messages: [...c.messages, assistantMessage], updatedAt: Date.now() }
-        : c
-    );
+      conversations = get().conversations.map(c =>
+        c.id === activeId
+          ? { ...c, messages: [...c.messages, assistantMessage], updatedAt: Date.now() }
+          : c
+      );
 
-    set({ conversations });
-    void persist(conversations);
+      set({ conversations });
+      void persist(conversations);
+    } finally {
+      set({ isSending: false });
+    }
   },
 
   loadConversation: id => {

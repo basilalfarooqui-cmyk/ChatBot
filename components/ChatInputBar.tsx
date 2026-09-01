@@ -1,4 +1,5 @@
-import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Animated, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../constants/ThemeContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -10,6 +11,7 @@ type Props = {
   onMicPress: () => void;
   micEnabled: boolean;
   isListening: boolean;
+  isTranscribing?: boolean;
 };
 
 export default function ChatInputBar({
@@ -19,10 +21,32 @@ export default function ChatInputBar({
   onMicPress,
   micEnabled,
   isListening,
+  isTranscribing = false,
 }: Props) {
   const { colors, radius, spacing } = useTheme();
   const { t } = useLanguage();
   const canSend = value.trim().length > 0;
+  const pulse = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!isListening) {
+      pulse.setValue(1);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.35, duration: 500, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 500, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+
+    return () => loop.stop();
+  }, [isListening, pulse]);
+
+  const micIconName = isTranscribing ? 'sync' : isListening ? 'mic' : 'mic-outline';
+  const micColor = micEnabled ? colors.accent : colors.disabled;
 
   return (
     <View
@@ -36,21 +60,20 @@ export default function ChatInputBar({
         style={[styles.input, { color: colors.text }]}
         value={value}
         onChangeText={onChangeText}
-        placeholder={t('inputPlaceholder')}
+        placeholder={isTranscribing ? t('transcribing') : t('inputPlaceholder')}
         placeholderTextColor={colors.muted}
+        editable={!isTranscribing}
         multiline
       />
       <TouchableOpacity
         testID="mic-button"
         onPress={onMicPress}
-        disabled={!micEnabled}
+        disabled={!micEnabled || isTranscribing}
         style={styles.iconButton}
       >
-        <Ionicons
-          name={isListening ? 'mic' : 'mic-outline'}
-          size={22}
-          color={micEnabled ? colors.accent : colors.disabled}
-        />
+        <Animated.View style={{ transform: [{ scale: pulse }] }}>
+          <Ionicons name={micIconName} size={22} color={micColor} />
+        </Animated.View>
       </TouchableOpacity>
       <TouchableOpacity
         testID="send-button"

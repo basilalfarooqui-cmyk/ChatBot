@@ -6,10 +6,11 @@ import type { ChatMessage } from '../store/chatStore';
 type Props = {
   message: ChatMessage;
   showPlay?: boolean;
+  isSpeaking?: boolean;
   onPlay?: () => void;
 };
 
-export default function ChatBubble({ message, showPlay, onPlay }: Props) {
+export default function ChatBubble({ message, showPlay, isSpeaking = false, onPlay }: Props) {
   const { colors, radius, spacing } = useTheme();
   const isUser = message.role === 'user';
   const time = new Date(message.timestamp).toLocaleTimeString([], {
@@ -42,7 +43,11 @@ export default function ChatBubble({ message, showPlay, onPlay }: Props) {
           </Text>
           {showPlay && !isUser && (
             <TouchableOpacity onPress={onPlay} testID="play-button" style={styles.playButton}>
-              <Ionicons name="volume-high" size={14} color={colors.muted} />
+              <Ionicons
+                name={isSpeaking ? 'stop-circle' : 'volume-high'}
+                size={isSpeaking ? 16 : 14}
+                color={isSpeaking ? colors.accent : colors.muted}
+              />
             </TouchableOpacity>
           )}
         </View>

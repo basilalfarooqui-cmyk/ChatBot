@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +14,7 @@ import ChatBubble from '../../components/ChatBubble';
 import ChatInputBar from '../../components/ChatInputBar';
 import SlideMenu from '../../components/SlideMenu';
 import VoiceUnavailableNote from '../../components/VoiceUnavailableNote';
+import ThinkingIndicator from '../../components/ThinkingIndicator';
 
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
@@ -24,21 +25,30 @@ export default function ChatScreen() {
   const activeConversationId = useChatStore(s => s.activeConversationId);
   const sendMessage = useChatStore(s => s.sendMessage);
   const startNewConversation = useChatStore(s => s.startNewConversation);
+  const isSending = useChatStore(s => s.isSending);
 
   const activeConversation = conversations.find(c => c.id === activeConversationId) ?? null;
   const messages = activeConversation?.messages ?? [];
 
   const [inputText, setInputText] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
 
   const languageInfo = LANGUAGES.find(l => l.code === languageCode);
   const voiceLocale = languageInfo?.voiceLocale;
   const { sttAvailable, ttsAvailable, checked } = useVoiceAvailability(languageCode, voiceLocale);
-  const { isListening, start: startListening, stop: stopListening } = useSpeechToText(
+  const { isListening, isTranscribing, start: startListening, stop: stopListening } = useSpeechToText(
     voiceLocale,
     text => setInputText(text)
   );
-  const { speak } = useTextToSpeech();
+  const { isSpeaking, speak, stop: stopSpeaking } = useTextToSpeech();
+
+  // isSpeaking reflects the hook's own real playback state (from tts-finish/
+  // tts-cancel events) -- once it goes false, whichever bubble we marked as
+  // speaking is done, regardless of how playback ended.
+  useEffect(() => {
+    if (!isSpeaking) setSpeakingMessageId(null);
+  }, [isSpeaking]);
 
   const handleSend = useCallback(() => {
     const text = inputText.trim();
@@ -56,10 +66,16 @@ export default function ChatScreen() {
   }, [isListening, startListening, stopListening]);
 
   const handlePlay = useCallback(
-    (text: string) => {
-      if (voiceLocale) void speak(text, voiceLocale);
+    (messageId: string, text: string) => {
+      if (speakingMessageId === messageId) {
+        void stopSpeaking();
+        return;
+      }
+      if (!voiceLocale) return;
+      setSpeakingMessageId(messageId);
+      void speak(text, voiceLocale);
     },
-    [speak, voiceLocale]
+    [speak, stopSpeaking, speakingMessageId, voiceLocale]
   );
 
   return (
@@ -77,8 +93,14 @@ export default function ChatScreen() {
         keyExtractor={item => item.id}
         inverted
         renderItem={({ item }) => (
-          <ChatBubble message={item} showPlay={ttsAvailable} onPlay={() => handlePlay(item.text)} />
+          <ChatBubble
+            message={item}
+            showPlay={ttsAvailable}
+            isSpeaking={speakingMessageId === item.id}
+            onPlay={() => handlePlay(item.id, item.text)}
+          />
         )}
+        ListHeaderComponent={<ThinkingIndicator visible={isSending} />}
         contentContainerStyle={styles.listContent}
       />
 
@@ -91,6 +113,7 @@ export default function ChatScreen() {
         onMicPress={handleMicPress}
         micEnabled={checked && sttAvailable}
         isListening={isListening}
+        isTranscribing={isTranscribing}
       />
 
       <SlideMenu

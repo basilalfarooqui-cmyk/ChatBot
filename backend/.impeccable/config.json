@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "admin-ui/index.html"
+        ],
+        "createdAt": "2026-09-01T12:11:48.374Z",
+        "reason": "user spec explicitly requested minimal styling for this internal single-form admin upload tool (SIH26088 build prompt Step 7: clean, dark background, white text, minimal) — tight type scale is the intended look, not an oversight"
+      }
+    ]
+  }
+}
