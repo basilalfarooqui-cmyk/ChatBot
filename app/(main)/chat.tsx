@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -88,33 +88,41 @@ export default function ChatScreen() {
         <View style={{ width: 26 }} />
       </View>
 
-      <FlatList
-        data={[...messages].reverse()}
-        keyExtractor={item => item.id}
-        inverted
-        renderItem={({ item }) => (
-          <ChatBubble
-            message={item}
-            showPlay={ttsAvailable}
-            isSpeaking={speakingMessageId === item.id}
-            onPlay={() => handlePlay(item.id, item.text)}
+      <KeyboardAvoidingView
+        style={styles.keyboardArea}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={insets.top}
+      >
+        <FlatList
+          data={[...messages].reverse()}
+          keyExtractor={item => item.id}
+          inverted
+          renderItem={({ item }) => (
+            <ChatBubble
+              message={item}
+              showPlay={ttsAvailable}
+              isSpeaking={speakingMessageId === item.id}
+              onPlay={() => handlePlay(item.id, item.text)}
+            />
+          )}
+          ListHeaderComponent={<ThinkingIndicator visible={isSending} />}
+          contentContainerStyle={styles.listContent}
+        />
+
+        <VoiceUnavailableNote visible={checked && !sttAvailable && !ttsAvailable} />
+
+        <View style={{ paddingBottom: insets.bottom }}>
+          <ChatInputBar
+            value={inputText}
+            onChangeText={setInputText}
+            onSend={handleSend}
+            onMicPress={handleMicPress}
+            micEnabled={checked && sttAvailable}
+            isListening={isListening}
+            isTranscribing={isTranscribing}
           />
-        )}
-        ListHeaderComponent={<ThinkingIndicator visible={isSending} />}
-        contentContainerStyle={styles.listContent}
-      />
-
-      <VoiceUnavailableNote visible={checked && !sttAvailable && !ttsAvailable} />
-
-      <ChatInputBar
-        value={inputText}
-        onChangeText={setInputText}
-        onSend={handleSend}
-        onMicPress={handleMicPress}
-        micEnabled={checked && sttAvailable}
-        isListening={isListening}
-        isTranscribing={isTranscribing}
-      />
+        </View>
+      </KeyboardAvoidingView>
 
       <SlideMenu
         isOpen={menuOpen}
@@ -130,6 +138,7 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  keyboardArea: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

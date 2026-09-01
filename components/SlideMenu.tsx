@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Dimensions, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../constants/ThemeContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -17,6 +18,7 @@ const screenWidth = Dimensions.get('window').width;
 const drawerWidth = screenWidth * 0.75;
 
 export default function SlideMenu({ isOpen, onClose, languageName, onNewChat, onHistory, onSettings }: Props) {
+  const insets = useSafeAreaInsets();
   const { colors, spacing } = useTheme();
   const { t } = useLanguage();
   const translateX = useRef(new Animated.Value(-drawerWidth)).current;
@@ -54,7 +56,7 @@ export default function SlideMenu({ isOpen, onClose, languageName, onNewChat, on
           { backgroundColor: colors.card, opacity, transform: [{ translateX }], width: drawerWidth },
         ]}
       >
-        <View style={{ padding: spacing.md }}>
+        <View style={{ padding: spacing.md, paddingTop: insets.top + spacing.md }}>
           <Text style={[styles.languageName, { color: colors.text }]}>{languageName}</Text>
         </View>
         <View style={[styles.divider, { backgroundColor: colors.border }]} />

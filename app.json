@@ -13,6 +13,7 @@
     },
     "android": {
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.sih26088.chatbot",
       "permissions": [
         "android.permission.RECORD_AUDIO"

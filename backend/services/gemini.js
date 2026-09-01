@@ -5,13 +5,27 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// This key's Gemini quota is tight enough that a single non-English chat
-// request (translate-in + embed + translate-out = 3 calls back to back) or a
-// multi-chunk document upload reliably hits 429 (confirmed while testing both
-// paths). Every Gemini call goes through this retry so any endpoint that
-// calls embedText/generateAnswer gets the same protection automatically.
-// ponytail: 3-attempt linear backoff is a ceiling; switch to a queue/rate
-// limiter if requests still 429 under real traffic.
+// This key's Gemini quota is tight enough that retries alone aren't
+// sufficient: confirmed by testing that 3 concurrent chat requests each
+// exhaust their own retries independently and all fail, because they're
+// competing for the same tiny per-minute quota at once. Serializing every
+// Gemini call through this queue means only one request is ever in flight,
+// so the retry backoff below actually has quota to recover into instead of
+// being drowned out by parallel retry storms.
+// ponytail: single global FIFO queue, no priority/timeout -- upgrade to a
+// proper rate limiter (or just a bigger quota) if concurrent traffic grows
+// enough that requests start queueing for a long time.
+let queueTail = Promise.resolve();
+
+function withQueue(task) {
+  const result = queueTail.then(task, task);
+  queueTail = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
 async function fetchWithRetry(url, options, attempt = 1) {
   const res = await fetch(url, options);
 
@@ -23,11 +37,15 @@ async function fetchWithRetry(url, options, attempt = 1) {
   return res;
 }
 
+function queuedFetchWithRetry(url, options) {
+  return withQueue(() => fetchWithRetry(url, options));
+}
+
 // text-embedding-004 is retired for this API key's account; gemini-embedding-001
 // is the current replacement. It defaults to 3072 dimensions, so
 // outputDimensionality pins it to 768 to match the documents.embedding column.
 async function embedText(text) {
-  const res = await fetchWithRetry(
+  const res = await queuedFetchWithRetry(
     `${BASE_URL}/gemini-embedding-001:embedContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
@@ -52,7 +70,7 @@ async function embedText(text) {
 // gemini-1.5-flash is retired for this API key's account; gemini-3.6-flash
 // is the model Google's own 404 response recommended as the replacement.
 async function generateAnswer(prompt) {
-  const res = await fetchWithRetry(
+  const res = await queuedFetchWithRetry(
     `${BASE_URL}/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
