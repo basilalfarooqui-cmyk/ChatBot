@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SIH26088 — Document Upload</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background: #121212;
+    color: #f0f0f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+  }
+  .card {
+    background: #1e1e1e;
+    border-radius: 12px;
+    padding: 32px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 24px;
+    font-weight: 600;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: #aaa;
+    margin-bottom: 6px;
+  }
+  input[type="text"],
+  input[type="file"] {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 18px;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    color: #f0f0f0;
+    font-size: 14px;
+  }
+  button {
+    width: 100%;
+    padding: 12px;
+    background: #4f46e5;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: #333;
+    cursor: not-allowed;
+  }
+  #status {
+    margin-top: 18px;
+    font-size: 13px;
+    min-height: 20px;
+  }
+  .status-ok { color: #4ade80; }
+  .status-error { color: #f87171; }
+  .status-loading { color: #93c5fd; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>SIH26088 — Document Upload</h1>
+
+    <label for="topic">Topic name</label>
+    <input type="text" id="topic" placeholder="e.g. PMFBY, PACS bylaws" />
+
+    <label for="file">Document (.txt or .pdf)</label>
+    <input type="file" id="file" accept=".txt,.pdf" />
+
+    <button id="uploadBtn">Upload &amp; Process</button>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const uploadBtn = document.getElementById('uploadBtn');
+    const fileInput = document.getElementById('file');
+    const topicInput = document.getElementById('topic');
+    const statusEl = document.getElementById('status');
+
+    uploadBtn.addEventListener('click', async () => {
+      const file = fileInput.files[0];
+      if (!file) {
+        statusEl.textContent = 'Choose a file first.';
+        statusEl.className = 'status-error';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('document', file);
+      if (topicInput.value.trim()) {
+        formData.append('topic', topicInput.value.trim());
+      }
+
+      uploadBtn.disabled = true;
+      statusEl.textContent = 'Uploading and processing…';
+      statusEl.className = 'status-loading';
+
+      try {
+        const res = await fetch('/admin/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Upload failed.');
+        }
+
+        statusEl.textContent = `Done: ${data.chunks_stored} chunks stored from ${data.filename}.`;
+        statusEl.className = 'status-ok';
+        fileInput.value = '';
+        topicInput.value = '';
+      } catch (err) {
+        statusEl.textContent = err.message || 'Upload failed.';
+        statusEl.className = 'status-error';
+      } finally {
+        uploadBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
