@@ -1,7 +1,7 @@
 const express = require('express');
 const { embedText, generateAnswer } = require('../services/gemini');
 const { translateText } = require('../services/translate');
-const { searchDocuments, buildRAGPrompt } = require('../services/rag');
+const { searchDocuments, buildRAGPrompt, buildNoContextPrompt } = require('../services/rag');
 
 const router = express.Router();
 
@@ -12,9 +12,6 @@ const LANGUAGE_NAMES = {
   sat: 'Santali', ks: 'Kashmiri', ne: 'Nepali', kok: 'Konkani',
   sd: 'Sindhi', doi: 'Dogri', mni: 'Manipuri', brx: 'Bodo', sa: 'Sanskrit',
 };
-
-const NO_INFO_MESSAGE =
-  "I don't have information on that topic. Please contact your local PACS office or visit cooperation.gov.in for assistance.";
 
 const SIMILARITY_THRESHOLD = 0.3;
 
@@ -38,15 +35,9 @@ router.post('/', async (req, res) => {
       retrievedChunks.length > 0 &&
       retrievedChunks.some(c => c.similarity >= SIMILARITY_THRESHOLD);
 
-    if (!hasRelevantInfo) {
-      const reply =
-        language === 'en'
-          ? NO_INFO_MESSAGE
-          : await translateText(NO_INFO_MESSAGE, languageName);
-      return res.json({ reply });
-    }
-
-    const prompt = buildRAGPrompt(englishMessage, retrievedChunks);
+    const prompt = hasRelevantInfo
+      ? buildRAGPrompt(englishMessage, retrievedChunks)
+      : buildNoContextPrompt(englishMessage);
     const englishAnswer = await generateAnswer(prompt);
 
     const finalAnswer =
