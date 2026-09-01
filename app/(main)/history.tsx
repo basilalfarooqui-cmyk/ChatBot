@@ -1,10 +1,12 @@
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTheme } from '../../constants/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { useChatStore } from '../../store/chatStore';
 
 export default function HistoryScreen() {
+  const insets = useSafeAreaInsets();
   const { colors, spacing } = useTheme();
   const { t } = useLanguage();
   const conversations = useChatStore(s => s.conversations);
@@ -18,7 +20,12 @@ export default function HistoryScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg, padding: spacing.md }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.bg, padding: spacing.md, paddingTop: insets.top + spacing.md },
+      ]}
+    >
       <Text style={[styles.title, { color: colors.text }]}>{t('historyTitle')}</Text>
       {sorted.length === 0 ? (
         <Text testID="history-empty" style={[styles.empty, { color: colors.muted }]}>

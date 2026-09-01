@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useTheme } from '../../constants/ThemeContext';
@@ -6,13 +7,19 @@ import { useLanguage } from '../../i18n/LanguageContext';
 import { LANGUAGES } from '../../i18n/languages';
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const { colors, radius, spacing } = useTheme();
   const { t, languageCode } = useLanguage();
   const languageInfo = LANGUAGES.find(l => l.code === languageCode);
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg, padding: spacing.md }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.bg, padding: spacing.md, paddingTop: insets.top + spacing.md },
+      ]}
+    >
       <Text style={[styles.title, { color: colors.text }]}>{t('settingsTitle')}</Text>
 
       <TouchableOpacity
