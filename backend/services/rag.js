@@ -55,41 +55,31 @@ async function searchDocuments(queryEmbedding, limit = 5) {
   return data || [];
 }
 
-function buildRAGPrompt(userQuestion, retrievedChunks) {
-  const info = retrievedChunks.map(c => c.content).join('\n\n---\n\n');
-
-  return `You are a helpful assistant for cooperative society members in India. Answer questions about cooperative laws, government schemes, PACS services, and agricultural support.
-
-Use ONLY the information provided below to answer. If the answer is not in the provided information, respond with exactly: 'I don't have information on that topic. Please contact your local PACS office or visit cooperation.gov.in for assistance.'
-
-Do NOT make up information. Do NOT answer questions outside of cooperative governance, schemes, and agricultural support.
-
-Information:
-${info}
-
-Question: ${userQuestion}
-
-Answer:`;
-}
-
 const NO_INFO_MESSAGE =
   "I don't have information on that topic. Please contact your local PACS office or visit cooperation.gov.in for assistance.";
 
-// Used when no document chunk scores above the similarity threshold. Without
-// this, every greeting ("hi", "thanks") also fails the threshold and gets the
-// same canned no-info line, which reads as broken to a real user. This still
-// forbids fabricating domain facts -- it just lets Gemini tell the difference
-// between "not a real question" and "real question, nothing on file."
-function buildNoContextPrompt(userMessage) {
+// A hard similarity threshold alone can't reliably tell "greeting" apart from
+// "real question" when the DB is small -- unrelated short text (e.g. "hi")
+// still lands above 0.3 cosine similarity against almost anything, purely
+// from the embedding space's baseline floor, not real relevance. So this
+// prompt always carries the greeting/small-talk branch itself, whether or
+// not context was retrieved -- Gemini decides relevance, not a raw number.
+function buildPrompt(userMessage, retrievedChunks) {
+  const hasContext = retrievedChunks.length > 0;
+  const info = hasContext
+    ? retrievedChunks.map(c => c.content).join('\n\n---\n\n')
+    : null;
+
   return `You are a helpful assistant for cooperative society members in India, focused on cooperative laws, government schemes, PACS services, and agricultural support.
 
-No document information matched this message. Decide which case applies:
+${hasContext ? `Reference information (use ONLY this for facts):\n${info}` : 'No reference information matched this message.'}
 
-1. If this is a greeting, small talk, or a general message not asking for specific factual information (e.g. "hi", "thanks", "how are you", "what can you do") -- respond briefly and naturally in one or two sentences, and mention you can help with questions about cooperative schemes, PACS services, and agricultural support.
-2. If this is a real question about cooperative laws, schemes, PACS, or agricultural support that you have no matching information for -- respond with EXACTLY this text and nothing else: "${NO_INFO_MESSAGE}"
-3. If this is a real question but clearly outside cooperative governance, schemes, and agricultural support (e.g. unrelated general knowledge) -- respond with EXACTLY this text and nothing else: "${NO_INFO_MESSAGE}"
+Decide which case applies to the message below:
+1. Greeting, small talk, or a general message not asking for specific factual information (e.g. "hi", "thanks", "how are you", "what can you do") -- respond briefly and naturally in one or two sentences, and mention you can help with cooperative schemes, PACS services, and agricultural support. Ignore the reference information for this case.
+2. A real question that the reference information above actually answers -- answer using ONLY that information.
+3. A real question the reference information does NOT answer, or a question clearly outside cooperative governance/schemes/agricultural support -- respond with EXACTLY this text and nothing else: "${NO_INFO_MESSAGE}"
 
-Never invent specific facts, numbers, scheme names, or legal details that weren't provided to you.
+Never invent facts, numbers, scheme names, or legal details not present in the reference information.
 
 Message: ${userMessage}
 
@@ -100,7 +90,6 @@ module.exports = {
   chunkText,
   embedAndStoreChunks,
   searchDocuments,
-  buildRAGPrompt,
-  buildNoContextPrompt,
+  buildPrompt,
   NO_INFO_MESSAGE,
 };

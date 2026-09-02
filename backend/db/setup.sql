@@ -14,8 +14,14 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS documents_embedding_idx
-  ON documents USING ivfflat (embedding vector_cosine_ops);
+-- No ivfflat index: it's an APPROXIMATE index, and with a small number of
+-- rows it clusters badly -- default probes=1 only scans one cluster, so a
+-- query vector that lands in a different cluster than the real match finds
+-- nothing at all (confirmed: self-match worked, a real different query
+-- returned 0 rows despite an exact match existing in the table). Plain
+-- sequential scan is exact and fast enough at hundreds of chunks. Add an
+-- ivfflat/hnsw index back (with probes tuned) only once row count is large
+-- enough that scan time is actually a measured problem.
 
 -- RPC function so the backend can run a cosine-similarity search via
 -- supabase-js's .rpc() instead of building raw SQL with an embedded vector

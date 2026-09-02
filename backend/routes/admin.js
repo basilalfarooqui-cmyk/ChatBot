@@ -2,7 +2,23 @@ const express = require('express');
 const path = require('path');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
+const { pdfToPng } = require('pdf-to-png-converter');
+const Tesseract = require('tesseract.js');
 const { chunkText, embedAndStoreChunks } = require('../services/rag');
+
+// Scanned/image PDFs have no text layer, so pdf-parse returns near nothing.
+// Fallback: render each page to an image and OCR it. Only runs when the
+// cheap pdf-parse pass already came back empty -- OCR is slow, skip it
+// whenever real text extraction works.
+async function ocrPdf(buffer) {
+  const pages = await pdfToPng(buffer, { viewportScale: 2.0 });
+  let text = '';
+  for (const page of pages) {
+    const { data } = await Tesseract.recognize(page.content, 'eng');
+    text += data.text + '\n';
+  }
+  return text;
+}
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -38,6 +54,9 @@ router.post('/upload', upload.single('document'), async (req, res) => {
     if (mimetype === 'application/pdf' || originalname.toLowerCase().endsWith('.pdf')) {
       const parsed = await pdfParse(buffer);
       text = parsed.text;
+      if (!text || text.trim().length < 50) {
+        text = await ocrPdf(buffer);
+      }
     } else if (mimetype === 'text/plain' || originalname.toLowerCase().endsWith('.txt')) {
       text = buffer.toString('utf-8');
     } else {

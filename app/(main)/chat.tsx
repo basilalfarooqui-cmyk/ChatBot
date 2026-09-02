@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -10,6 +10,7 @@ import { useChatStore } from '../../store/chatStore';
 import { useVoiceAvailability } from '../../hooks/useVoiceAvailability';
 import { useSpeechToText } from '../../hooks/useSpeechToText';
 import { useTextToSpeech } from '../../hooks/useTextToSpeech';
+import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
 import ChatBubble from '../../components/ChatBubble';
 import ChatInputBar from '../../components/ChatInputBar';
 import SlideMenu from '../../components/SlideMenu';
@@ -42,6 +43,7 @@ export default function ChatScreen() {
     text => setInputText(text)
   );
   const { isSpeaking, speak, stop: stopSpeaking } = useTextToSpeech();
+  const keyboardHeight = useKeyboardHeight();
 
   // isSpeaking reflects the hook's own real playback state (from tts-finish/
   // tts-cancel events) -- once it goes false, whichever bubble we marked as
@@ -88,11 +90,7 @@ export default function ChatScreen() {
         <View style={{ width: 26 }} />
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.keyboardArea}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={insets.top}
-      >
+      <View style={styles.keyboardArea}>
         <FlatList
           data={[...messages].reverse()}
           keyExtractor={item => item.id}
@@ -111,7 +109,7 @@ export default function ChatScreen() {
 
         <VoiceUnavailableNote visible={checked && !sttAvailable && !ttsAvailable} />
 
-        <View style={{ paddingBottom: insets.bottom }}>
+        <View style={{ paddingBottom: keyboardHeight > 0 ? keyboardHeight : insets.bottom }}>
           <ChatInputBar
             value={inputText}
             onChangeText={setInputText}
@@ -122,7 +120,7 @@ export default function ChatScreen() {
             isTranscribing={isTranscribing}
           />
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       <SlideMenu
         isOpen={menuOpen}

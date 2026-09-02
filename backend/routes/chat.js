@@ -1,7 +1,7 @@
 const express = require('express');
 const { embedText, generateAnswer } = require('../services/gemini');
 const { translateText } = require('../services/translate');
-const { searchDocuments, buildRAGPrompt, buildNoContextPrompt } = require('../services/rag');
+const { searchDocuments, buildPrompt } = require('../services/rag');
 
 const router = express.Router();
 
@@ -30,14 +30,9 @@ router.post('/', async (req, res) => {
 
     const queryEmbedding = await embedText(englishMessage);
     const retrievedChunks = await searchDocuments(queryEmbedding, 5);
+    const relevantChunks = retrievedChunks.filter(c => c.similarity >= SIMILARITY_THRESHOLD);
 
-    const hasRelevantInfo =
-      retrievedChunks.length > 0 &&
-      retrievedChunks.some(c => c.similarity >= SIMILARITY_THRESHOLD);
-
-    const prompt = hasRelevantInfo
-      ? buildRAGPrompt(englishMessage, retrievedChunks)
-      : buildNoContextPrompt(englishMessage);
+    const prompt = buildPrompt(englishMessage, relevantChunks);
     const englishAnswer = await generateAnswer(prompt);
 
     const finalAnswer =
