@@ -69,30 +69,41 @@ async function embedText(text) {
 
 // gemini-1.5-flash is retired for this API key's account; gemini-3.6-flash
 // is the model Google's own 404 response recommended as the replacement.
+// This flow only needs correct instruction-following, not any one model's
+// specific quality/speed -- so on quota exhaustion (429) or retirement
+// (404) it falls through to the next model in the list, which has its own
+// separate daily quota. Order is newest-first (best chance of being live).
+const GENERATION_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+
 async function generateAnswer(prompt) {
-  const res = await queuedFetchWithRetry(
-    `${BASE_URL}/gemini-3.6-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 500 },
-      }),
+  let lastError;
+
+  for (const model of GENERATION_MODELS) {
+    const res = await withQueue(() =>
+      fetch(`${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 500 },
+        }),
+      })
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text.trim();
+      lastError = new Error(`Gemini ${model} returned no text: ${JSON.stringify(data)}`);
+      continue;
     }
-  );
 
-  if (!res.ok) {
     const errBody = await res.text();
-    throw new Error(`Gemini generateAnswer failed (${res.status}): ${errBody}`);
+    lastError = new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
+    if (res.status !== 429 && res.status !== 404) throw lastError;
   }
 
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error(`Gemini generateAnswer returned no text: ${JSON.stringify(data)}`);
-  }
-  return text.trim();
+  throw lastError;
 }
 
 async function translateText(text, targetLanguage) {
