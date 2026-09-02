@@ -79,16 +79,25 @@ async function generateAnswer(prompt) {
   let lastError;
 
   for (const model of GENERATION_MODELS) {
-    const res = await withQueue(() =>
-      fetch(`${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 500 },
-        }),
-      })
-    );
+    let res;
+    try {
+      res = await withQueue(() =>
+        fetch(`${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+          }),
+        })
+      );
+    } catch (networkErr) {
+      // Network-level failure (DNS, connection reset, etc) -- not an HTTP
+      // error response, so it never reaches the status-code checks below.
+      // Worth trying the next model rather than aborting the whole request.
+      lastError = networkErr;
+      continue;
+    }
 
     if (res.ok) {
       const data = await res.json();
@@ -100,7 +109,9 @@ async function generateAnswer(prompt) {
 
     const errBody = await res.text();
     lastError = new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
-    if (res.status !== 429 && res.status !== 404) throw lastError;
+    // 429 (quota), 404 (retired), 503 (temporarily overloaded) -- all worth
+    // trying the next model for. Anything else is a real error.
+    if (res.status !== 429 && res.status !== 404 && res.status !== 503) throw lastError;
   }
 
   throw lastError;
