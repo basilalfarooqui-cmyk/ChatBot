@@ -7,6 +7,20 @@ const { chunkText, embedAndStoreChunks } = require('../services/rag');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
+const ADMIN_PASSWORD = '696969';
+
+router.use((req, res, next) => {
+  const auth = req.headers.authorization || '';
+  const [, encoded] = auth.split(' ');
+  const decoded = encoded ? Buffer.from(encoded, 'base64').toString() : '';
+  const [, password] = decoded.split(':');
+
+  if (password === ADMIN_PASSWORD) return next();
+
+  res.set('WWW-Authenticate', 'Basic realm="Admin"');
+  return res.status(401).send('Auth required.');
+});
+
 router.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'admin-ui', 'index.html'));
 });
