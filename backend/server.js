@@ -7,6 +7,7 @@ const { verifySchema } = require('./services/supabase');
 const chatRoute = require('./routes/chat');
 const adminRoute = require('./routes/admin');
 const bolnaRoute = require('./routes/bolna');
+const voiceRoute = require('./routes/voice');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,6 +23,7 @@ app.get('/health', (req, res) => {
 app.use('/api/chat', chatRoute);
 app.use('/admin', adminRoute);
 app.use('/calls', bolnaRoute);
+app.use('/voice', voiceRoute);
 
 async function start() {
   const schemaOk = await verifySchema();

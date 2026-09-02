@@ -26,7 +26,8 @@
       "expo-router",
       "expo-dev-client",
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      "expo-audio"
     ]
   }
 }

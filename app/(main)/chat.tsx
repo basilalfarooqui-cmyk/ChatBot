@@ -36,10 +36,9 @@ export default function ChatScreen() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
 
   const languageInfo = LANGUAGES.find(l => l.code === languageCode);
-  const voiceLocale = languageInfo?.voiceLocale;
-  const { sttAvailable, ttsAvailable, checked } = useVoiceAvailability(languageCode, voiceLocale);
+  const { sttAvailable, ttsAvailable, checked } = useVoiceAvailability();
   const { isListening, isTranscribing, start: startListening, stop: stopListening } = useSpeechToText(
-    voiceLocale,
+    languageCode,
     text => setInputText(text)
   );
   const { isSpeaking, speak, stop: stopSpeaking } = useTextToSpeech();
@@ -73,11 +72,10 @@ export default function ChatScreen() {
         void stopSpeaking();
         return;
       }
-      if (!voiceLocale) return;
       setSpeakingMessageId(messageId);
-      void speak(text, voiceLocale);
+      void speak(text);
     },
-    [speak, stopSpeaking, speakingMessageId, voiceLocale]
+    [speak, stopSpeaking, speakingMessageId]
   );
 
   return (

@@ -103,7 +103,7 @@ const GENERATION_MODELS = [
   'gemini-3-flash-preview',
 ];
 
-async function attemptModel(model, prompt) {
+async function attemptModel(model, parts) {
   const startedAt = Date.now();
   let res;
   try {
@@ -111,7 +111,7 @@ async function attemptModel(model, prompt) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ parts }],
         generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
       }),
     });
@@ -141,16 +141,16 @@ async function attemptModel(model, prompt) {
 // not the sum of every failed/hung attempt before it. Different models have
 // separate quotas, so running them concurrently doesn't reintroduce the
 // same-model quota race the queue below still guards against.
-async function generateAnswer(prompt) {
+function raceModels(parts, models = GENERATION_MODELS) {
   return withQueue(async () => {
-    const attempts = GENERATION_MODELS.map(
+    const attempts = models.map(
       (model, i) =>
         new Promise((resolve, reject) => {
           // Small stagger so a fast 429 (quota exhausted) on an earlier
           // model can be seen before piling every model's request on at
           // once -- not required for correctness, just avoids needlessly
           // spamming every model when the first one would've failed fast.
-          setTimeout(() => attemptModel(model, prompt).then(resolve, reject), i * 500);
+          setTimeout(() => attemptModel(model, parts).then(resolve, reject), i * 500);
         })
     );
 
@@ -163,9 +163,85 @@ async function generateAnswer(prompt) {
   });
 }
 
+async function generateAnswer(prompt) {
+  return raceModels([{ text: prompt }]);
+}
+
 async function translateText(text, targetLanguage) {
   const prompt = `Translate the following text to ${targetLanguage}. Return ONLY the translated text, nothing else, no explanation: ${text}`;
   return generateAnswer(prompt);
 }
 
-module.exports = { embedText, generateAnswer, translateText };
+// "lite"/"preview" model variants are reduced-capability and confirmed bad
+// at this specifically: gemini-3.1-flash-lite returned 200 OK but just
+// echoed the raw audio bytes back as garbled text instead of transcribing
+// it -- no error, just wrong output, which is worse than a clean failure.
+// Restrict audio transcription to the full flash models, which are
+// documented as fully multimodal.
+const TRANSCRIPTION_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
+
+// Same multimodal generateContent endpoint the text models use -- Gemini
+// accepts an audio part alongside the text prompt and transcribes it
+// directly, so this reuses the exact same model-racing/fallback machinery
+// as generateAnswer instead of needing a separate dedicated STT provider.
+async function transcribeAudio(base64Audio, mimeType, languageHint) {
+  const languageLine = languageHint ? ` The speaker is using ${languageHint}.` : '';
+  return raceModels(
+    [
+      { text: `Transcribe exactly what is said in this audio.${languageLine} Return ONLY the transcribed text, nothing else, no explanation.` },
+      { inlineData: { mimeType, data: base64Audio } },
+    ],
+    TRANSCRIPTION_MODELS
+  );
+}
+
+// Gemini's TTS models return raw PCM samples (no container/header), not a
+// standard playable audio file -- the caller wraps this into a WAV file.
+const TTS_MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-3.1-flash-tts-preview'];
+
+async function attemptTts(model, text) {
+  const startedAt = Date.now();
+  const res = await fetchWithTimeout(`${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+      },
+    }),
+  });
+
+  console.log(`[gemini-tts] ${model} responded ${res.status} in ${Date.now() - startedAt}ms`);
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Gemini TTS ${model} failed (${res.status}): ${errBody}`);
+  }
+
+  const data = await res.json();
+  const part = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+  if (!part) throw new Error(`Gemini TTS ${model} returned no audio: ${JSON.stringify(data)}`);
+  return { base64Pcm: part.data, mimeType: part.mimeType };
+}
+
+async function synthesizeSpeech(text) {
+  return withQueue(async () => {
+    const attempts = TTS_MODELS.map(
+      (model, i) =>
+        new Promise((resolve, reject) => {
+          setTimeout(() => attemptTts(model, text).then(resolve, reject), i * 500);
+        })
+    );
+
+    try {
+      return await Promise.any(attempts);
+    } catch (aggregateErr) {
+      const messages = (aggregateErr.errors ?? [aggregateErr]).map(e => e.message).join(' | ');
+      throw new Error(`All Gemini TTS models failed: ${messages}`);
+    }
+  });
+}
+
+module.exports = { embedText, generateAnswer, translateText, transcribeAudio, synthesizeSpeech };

@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import Voice from '@react-native-voice/voice';
+import { useCallback, useState } from 'react';
+import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
+import { LANGUAGES } from '../i18n/languages';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:3000';
 
 export type SpeechToText = {
   isListening: boolean;
@@ -8,50 +11,26 @@ export type SpeechToText = {
   stop: () => Promise<void>;
 };
 
+// Cloud STT (Gemini) instead of the device's on-device SpeechRecognizer --
+// works the same for every language regardless of what speech engine the
+// phone has installed, and there's no native silence-timeout to fight
+// since this is a fixed record-then-upload step, not continuous listening.
 export function useSpeechToText(
-  voiceLocale: string | undefined,
+  languageCode: string,
   onResult: (text: string) => void
 ): SpeechToText {
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const onResultRef = useRef(onResult);
-  onResultRef.current = onResult;
-
-  useEffect(() => {
-    Voice.onSpeechResults = event => {
-      const text = event.value?.[0];
-      if (text) onResultRef.current(text);
-      setIsTranscribing(false);
-    };
-    Voice.onSpeechError = () => {
-      setIsListening(false);
-      setIsTranscribing(false);
-    };
-    // The recognizer stops listening on its own (e.g. after silence) before
-    // results arrive -- that gap is the "transcribing" state, not idle.
-    Voice.onSpeechEnd = () => {
-      setIsListening(false);
-      setIsTranscribing(true);
-    };
-
-    return () => {
-      Voice.destroy().then(Voice.removeAllListeners).catch(() => {});
-    };
-  }, []);
 
   const start = useCallback(async () => {
-    if (!voiceLocale) return false;
     try {
-      // Android's default silence timeout is short enough to cut off mid-
-      // sentence during a normal thinking pause, especially noticeable when
-      // speaking a non-English language. This isn't app logic auto-stopping
-      // the mic -- it's the native SpeechRecognizer's own default. Extending
-      // both silence windows gives real speech more room before it gives up.
-      await Voice.start(voiceLocale, {
-        EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 4000,
-        EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 4000,
-        EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 15000,
-      });
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) return false;
+
+      await setAudioModeAsync({ allowsRecording: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setIsListening(true);
       setIsTranscribing(false);
       return true;
@@ -59,18 +38,38 @@ export function useSpeechToText(
       setIsListening(false);
       return false;
     }
-  }, [voiceLocale]);
+  }, [recorder]);
 
   const stop = useCallback(async () => {
+    setIsListening(false);
+    setIsTranscribing(true);
     try {
-      await Voice.stop();
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (!uri) throw new Error('No recording produced');
+
+      const languageHint = LANGUAGES.find(l => l.code === languageCode)?.englishName;
+
+      const formData = new FormData();
+      formData.append('audio', {
+        uri,
+        name: 'recording.m4a',
+        type: 'audio/aac',
+      } as unknown as Blob);
+      if (languageHint) formData.append('language', languageHint);
+
+      const res = await fetch(`${BACKEND_URL}/voice/transcribe`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.text) onResult(data.text);
     } catch {
-      // best effort
+      // best effort -- leave input empty rather than crash
     } finally {
-      setIsListening(false);
-      setIsTranscribing(true);
+      setIsTranscribing(false);
     }
-  }, []);
+  }, [recorder, languageCode, onResult]);
 
   return { isListening, isTranscribing, start, stop };
 }

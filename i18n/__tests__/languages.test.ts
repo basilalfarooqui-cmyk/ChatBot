@@ -1,4 +1,4 @@
-import { LANGUAGES, VOICE_RELIABLE_CODES } from '../languages';
+import { LANGUAGES } from '../languages';
 
 describe('languages metadata', () => {
   it('has exactly 23 entries', () => {
@@ -19,22 +19,4 @@ describe('languages metadata', () => {
     expect(new Set(codes).size).toBe(codes.length);
   });
 
-  it('Hindi has voiceLocale hi-IN', () => {
-    expect(LANGUAGES.find(l => l.code === 'hi')?.voiceLocale).toBe('hi-IN');
-  });
-
-  it('Santali has no voiceLocale', () => {
-    expect(LANGUAGES.find(l => l.code === 'sat')?.voiceLocale).toBeUndefined();
-  });
-
-  it('Odia has a voiceLocale but is not in the reliable whitelist', () => {
-    expect(LANGUAGES.find(l => l.code === 'or')?.voiceLocale).toBe('or-IN');
-    expect(VOICE_RELIABLE_CODES).not.toContain('or');
-  });
-
-  it('VOICE_RELIABLE_CODES has exactly the 11 spec languages', () => {
-    expect(VOICE_RELIABLE_CODES.sort()).toEqual(
-      ['hi', 'en', 'bn', 'ta', 'te', 'mr', 'gu', 'kn', 'ml', 'pa', 'ur'].sort()
-    );
-  });
 });
