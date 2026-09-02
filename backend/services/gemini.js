@@ -90,7 +90,18 @@ async function embedText(text) {
 // specific quality/speed -- so on quota exhaustion (429) or retirement
 // (404) it falls through to the next model in the list, which has its own
 // separate daily quota. Order is newest-first (best chance of being live).
-const GENERATION_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+// gemini-2.5-flash is confirmed retired (404) for this key -- dropped, it
+// was pure wasted time on every single call. Padded the list further since
+// all 4 previous entries have been observed failing simultaneously (one
+// exhausted, one retired, two hung) during a single real request.
+const GENERATION_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+  'gemini-3-flash-preview',
+];
 
 async function attemptModel(model, prompt) {
   const startedAt = Date.now();
@@ -146,7 +157,8 @@ async function generateAnswer(prompt) {
     try {
       return await Promise.any(attempts);
     } catch (aggregateErr) {
-      throw aggregateErr.errors?.[aggregateErr.errors.length - 1] ?? aggregateErr;
+      const messages = (aggregateErr.errors ?? [aggregateErr]).map(e => e.message).join(' | ');
+      throw new Error(`All Gemini models failed: ${messages}`);
     }
   });
 }

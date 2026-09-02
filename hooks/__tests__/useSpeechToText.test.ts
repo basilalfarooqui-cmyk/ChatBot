@@ -20,7 +20,9 @@ describe('useSpeechToText', () => {
     await act(async () => {
       await result.current.start();
     });
-    expect(Voice.start).toHaveBeenCalledWith('hi-IN');
+    expect(Voice.start).toHaveBeenCalledWith('hi-IN', expect.objectContaining({
+      EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 4000,
+    }));
     expect(result.current.isListening).toBe(true);
   });
 

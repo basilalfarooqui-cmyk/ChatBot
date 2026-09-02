@@ -42,7 +42,16 @@ export function useSpeechToText(
   const start = useCallback(async () => {
     if (!voiceLocale) return false;
     try {
-      await Voice.start(voiceLocale);
+      // Android's default silence timeout is short enough to cut off mid-
+      // sentence during a normal thinking pause, especially noticeable when
+      // speaking a non-English language. This isn't app logic auto-stopping
+      // the mic -- it's the native SpeechRecognizer's own default. Extending
+      // both silence windows gives real speech more room before it gives up.
+      await Voice.start(voiceLocale, {
+        EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 4000,
+        EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 4000,
+        EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 15000,
+      });
       setIsListening(true);
       setIsTranscribing(false);
       return true;
