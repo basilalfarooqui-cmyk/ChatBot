@@ -5,6 +5,23 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// No timeout on the raw fetch calls meant a genuinely hung request (Gemini
+// overloaded but not returning a clean error) would wait forever -- the
+// request only died when Railway's own ~5min proxy timeout killed the
+// connection, giving the user a multi-minute hang instead of a fast retry
+// or fallback. This caps every attempt so a hang fails fast instead.
+const FETCH_TIMEOUT_MS = 20000;
+
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // This key's Gemini quota is tight enough that retries alone aren't
 // sufficient: confirmed by testing that 3 concurrent chat requests each
 // exhaust their own retries independently and all fail, because they're
@@ -27,7 +44,7 @@ function withQueue(task) {
 }
 
 async function fetchWithRetry(url, options, attempt = 1) {
-  const res = await fetch(url, options);
+  const res = await fetchWithTimeout(url, options);
 
   if (res.status === 429 && attempt < 4) {
     await sleep(attempt * 5000);
@@ -75,46 +92,63 @@ async function embedText(text) {
 // separate daily quota. Order is newest-first (best chance of being live).
 const GENERATION_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-2.5-flash'];
 
-async function generateAnswer(prompt) {
-  let lastError;
-
-  for (const model of GENERATION_MODELS) {
-    let res;
-    try {
-      res = await withQueue(() =>
-        fetch(`${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-          }),
-        })
-      );
-    } catch (networkErr) {
-      // Network-level failure (DNS, connection reset, etc) -- not an HTTP
-      // error response, so it never reaches the status-code checks below.
-      // Worth trying the next model rather than aborting the whole request.
-      lastError = networkErr;
-      continue;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) return text.trim();
-      lastError = new Error(`Gemini ${model} returned no text: ${JSON.stringify(data)}`);
-      continue;
-    }
-
-    const errBody = await res.text();
-    lastError = new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
-    // 429 (quota), 404 (retired), 503 (temporarily overloaded) -- all worth
-    // trying the next model for. Anything else is a real error.
-    if (res.status !== 429 && res.status !== 404 && res.status !== 503) throw lastError;
+async function attemptModel(model, prompt) {
+  const startedAt = Date.now();
+  let res;
+  try {
+    res = await fetchWithTimeout(`${BASE_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+      }),
+    });
+  } catch (networkErr) {
+    console.log(`[gemini] ${model} threw after ${Date.now() - startedAt}ms: ${networkErr.message}`);
+    throw networkErr;
   }
 
-  throw lastError;
+  console.log(`[gemini] ${model} responded ${res.status} in ${Date.now() - startedAt}ms`);
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error(`Gemini ${model} returned no text: ${JSON.stringify(data)}`);
+  return text.trim();
+}
+
+// A strictly sequential fallback meant one hung model (no error, just slow)
+// blocked every model after it from even starting -- confirmed live: a 20s
+// timeout on one model added a full 20s of dead time before the next model,
+// which would have succeeded in 15s, ever got a chance to run. Racing them
+// instead means total latency is bounded by whichever model finishes first,
+// not the sum of every failed/hung attempt before it. Different models have
+// separate quotas, so running them concurrently doesn't reintroduce the
+// same-model quota race the queue below still guards against.
+async function generateAnswer(prompt) {
+  return withQueue(async () => {
+    const attempts = GENERATION_MODELS.map(
+      (model, i) =>
+        new Promise((resolve, reject) => {
+          // Small stagger so a fast 429 (quota exhausted) on an earlier
+          // model can be seen before piling every model's request on at
+          // once -- not required for correctness, just avoids needlessly
+          // spamming every model when the first one would've failed fast.
+          setTimeout(() => attemptModel(model, prompt).then(resolve, reject), i * 500);
+        })
+    );
+
+    try {
+      return await Promise.any(attempts);
+    } catch (aggregateErr) {
+      throw aggregateErr.errors?.[aggregateErr.errors.length - 1] ?? aggregateErr;
+    }
+  });
 }
 
 async function translateText(text, targetLanguage) {

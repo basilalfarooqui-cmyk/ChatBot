@@ -15,6 +15,15 @@ const LANGUAGE_NAMES = {
 
 const SIMILARITY_THRESHOLD = 0.3;
 
+// The app's selected language doesn't guarantee what script the user
+// actually typed in -- someone with Telugu selected can still type in
+// English. Skip the translate-in call (one fewer Gemini round trip) when
+// the message is already plain ASCII, since every supported non-English
+// language uses a non-Latin script.
+function looksEnglish(text) {
+  return /^[\x00-\x7F]*$/.test(text);
+}
+
 router.post('/', async (req, res) => {
   try {
     const { message, language = 'en' } = req.body;
@@ -26,7 +35,7 @@ router.post('/', async (req, res) => {
     const languageName = LANGUAGE_NAMES[language] || 'English';
 
     const englishMessage =
-      language === 'en' ? message : await translateText(message, 'English');
+      language === 'en' || looksEnglish(message) ? message : await translateText(message, 'English');
 
     const queryEmbedding = await embedText(englishMessage);
     const retrievedChunks = await searchDocuments(queryEmbedding, 5);
