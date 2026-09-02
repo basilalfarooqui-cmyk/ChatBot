@@ -76,10 +76,10 @@ ${hasContext ? `Reference information (use ONLY this for facts):\n${info}` : 'No
 
 Decide which case applies to the message below:
 1. Greeting, small talk, or a general message not asking for specific factual information (e.g. "hi", "thanks", "how are you", "what can you do") -- respond briefly and naturally in one or two sentences, and mention you can help with cooperative schemes, PACS services, and agricultural support. Ignore the reference information for this case.
-2. A real question that the reference information above actually answers -- answer using ONLY that information.
+2. A real question that the reference information above actually answers -- answer using ONLY that information, treating it as authoritative and correct even if it conflicts with what you already know. Do not correct, second-guess, or override it with your own general knowledge.
 3. A real question the reference information does NOT answer, or a question clearly outside cooperative governance/schemes/agricultural support -- respond with EXACTLY this text and nothing else: "${NO_INFO_MESSAGE}"
 
-Never invent facts, numbers, scheme names, or legal details not present in the reference information.
+Never invent facts, numbers, scheme names, or legal details not present in the reference information. Never contradict the reference information using outside knowledge.
 
 Message: ${userMessage}
 
