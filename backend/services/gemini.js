@@ -186,6 +186,7 @@ async function streamAnswer(prompt, onDelta) {
     let lastError;
 
     for (const model of GENERATION_MODELS) {
+      const startedAt = Date.now();
       let res;
       try {
         res = await fetchWithTimeout(
@@ -200,9 +201,12 @@ async function streamAnswer(prompt, onDelta) {
           }
         );
       } catch (networkErr) {
+        console.log(`[gemini-stream] ${model} threw after ${Date.now() - startedAt}ms: ${networkErr.message}`);
         lastError = networkErr;
         continue;
       }
+
+      console.log(`[gemini-stream] ${model} responded ${res.status} in ${Date.now() - startedAt}ms`);
 
       if (!res.ok) {
         const errBody = await res.text();
@@ -216,32 +220,45 @@ async function streamAnswer(prompt, onDelta) {
       let buffer = '';
       let gotAnyText = false;
 
+      const processLine = line => {
+        if (!line.startsWith('data:')) return;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr) return;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            gotAnyText = true;
+            onDelta(text);
+          }
+        } catch {
+          // partial/malformed line -- skip, not fatal
+        }
+      };
+
+      // Gemini terminates each SSE event with \r\n\r\n, not \n\n -- a plain
+      // '\n\n' search never matches, so every event silently piled up into
+      // one unparseable blob instead of being split and processed as it
+      // arrived. This matches \n\n, \r\n\r\n, or any mix of the two.
+      const EVENT_BOUNDARY = /\r?\n\r?\n/;
+
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
 
-          let eventEnd;
-          while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
-            const line = buffer.slice(0, eventEnd).trim();
-            buffer = buffer.slice(eventEnd + 2);
-            if (!line.startsWith('data:')) continue;
-
-            const jsonStr = line.slice(5).trim();
-            if (!jsonStr) continue;
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) {
-                gotAnyText = true;
-                onDelta(text);
-              }
-            } catch {
-              // partial/malformed line -- skip, not fatal
-            }
+          let match;
+          while ((match = buffer.match(EVENT_BOUNDARY))) {
+            processLine(buffer.slice(0, match.index).trim());
+            buffer = buffer.slice(match.index + match[0].length);
           }
         }
+        // The final event often has no trailing boundary before the
+        // connection closes -- without this, that last (sometimes only)
+        // chunk of real text sits unprocessed in the buffer and gets
+        // silently dropped.
+        if (buffer.trim()) processLine(buffer.trim());
       } catch (streamErr) {
         if (gotAnyText) throw streamErr; // already sent partial output, can't fall back cleanly
         lastError = streamErr;
