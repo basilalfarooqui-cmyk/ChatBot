@@ -8,6 +8,7 @@ const chatRoute = require('./routes/chat');
 const adminRoute = require('./routes/admin');
 const bolnaRoute = require('./routes/bolna');
 const voiceRoute = require('./routes/voice');
+const llmRoute = require('./routes/llm');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,6 +25,7 @@ app.use('/api/chat', chatRoute);
 app.use('/admin', adminRoute);
 app.use('/calls', bolnaRoute);
 app.use('/voice', voiceRoute);
+app.use('/v1', llmRoute);
 
 async function start() {
   const schemaOk = await verifySchema();
