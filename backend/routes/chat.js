@@ -1,7 +1,7 @@
 const express = require('express');
 const { embedText, generateAnswer } = require('../services/gemini');
 const { translateText } = require('../services/translate');
-const { searchDocuments, buildPrompt } = require('../services/rag');
+const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD } = require('../services/rag');
 
 const router = express.Router();
 
@@ -12,8 +12,6 @@ const LANGUAGE_NAMES = {
   sat: 'Santali', ks: 'Kashmiri', ne: 'Nepali', kok: 'Konkani',
   sd: 'Sindhi', doi: 'Dogri', mni: 'Manipuri', brx: 'Bodo', sa: 'Sanskrit',
 };
-
-const SIMILARITY_THRESHOLD = 0.3;
 
 // The app's selected language doesn't guarantee what script the user
 // actually typed in -- someone with Telugu selected can still type in

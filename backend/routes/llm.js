@@ -1,11 +1,10 @@
 const express = require('express');
 const { embedText, streamAnswer } = require('../services/gemini');
-const { searchDocuments, buildPrompt } = require('../services/rag');
+const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD } = require('../services/rag');
 
 const router = express.Router();
 
 const MODEL_NAME = 'sih-chatbot-rag';
-const SIMILARITY_THRESHOLD = 0.3;
 const AUTH_TOKEN = process.env.CUSTOM_LLM_SECRET;
 
 // Bolna's voice agent authenticates with a Bearer token, same as calling
@@ -53,6 +52,10 @@ router.post('/chat/completions', async (req, res) => {
     const queryEmbedding = await embedText(userText);
     const retrievedChunks = await searchDocuments(queryEmbedding, 5);
     const relevantChunks = retrievedChunks.filter(c => c.similarity >= SIMILARITY_THRESHOLD);
+    // buildPrompt itself now instructs Gemini to reply in the caller's own
+    // language -- a no-op for the app's text chat (which always sends it
+    // pre-translated English) but essential here, since Bolna sends whatever
+    // language the caller actually spoke with no translation step.
     const prompt = buildPrompt(userText, relevantChunks);
 
     res.set({

@@ -58,6 +58,21 @@ async function searchDocuments(queryEmbedding, limit = 5) {
 const NO_INFO_MESSAGE =
   "I don't have information on that topic. Please contact your local PACS office or visit cooperation.gov.in for assistance.";
 
+// No numeric cutoff actually separates relevant from irrelevant here --
+// measured directly against this project's real data, a genuinely relevant
+// short query ("who is mohan") scored 0.4661, LOWER than a genuinely
+// irrelevant chunk scored for that same query (0.4784, "basil is
+// brainless"). Score ranges for relevant and irrelevant chunks overlap
+// (roughly 0.46-0.60 for both), so no threshold value can cleanly draw a
+// line between them -- raising it to exclude floor-noise greetings also
+// excluded real matches like this one. The LLM's own instructed judgment
+// (buildPrompt's case 1/2/3 classification) has proven reliable across
+// every test case even with irrelevant chunks present, including staying
+// in the caller's own language -- that was fixed at the prompt level, not
+// by filtering chunks. So don't filter at all; let Gemini decide relevance
+// from whatever's retrieved.
+const SIMILARITY_THRESHOLD = 0;
+
 // A hard similarity threshold alone can't reliably tell "greeting" apart from
 // "real question" when the DB is small -- unrelated short text (e.g. "hi")
 // still lands above 0.3 cosine similarity against almost anything, purely
@@ -72,12 +87,14 @@ function buildPrompt(userMessage, retrievedChunks) {
 
   return `You are a helpful assistant for cooperative society members in India, focused on cooperative laws, government schemes, PACS services, and agricultural support.
 
+Always respond in the same language and script the caller used in their message below, no matter what language these instructions are written in.
+
 ${hasContext ? `Reference information (use ONLY this for facts):\n${info}` : 'No reference information matched this message.'}
 
 Decide which case applies to the message below:
-1. Greeting, small talk, or a general message not asking for specific factual information (e.g. "hi", "thanks", "how are you", "what can you do") -- respond briefly and naturally in one or two sentences, and mention you can help with cooperative schemes, PACS services, and agricultural support. Ignore the reference information for this case.
+1. Greeting, small talk, or a general message not asking for specific factual information (e.g. "hi", "thanks", "how are you", "what can you do") -- respond briefly and naturally in one or two sentences, in the caller's own language, and mention you can help with cooperative schemes, PACS services, and agricultural support. Ignore the reference information for this case.
 2. A real question that the reference information above actually answers -- answer using ONLY that information, treating it as authoritative and correct even if it conflicts with what you already know. Do not correct, second-guess, or override it with your own general knowledge.
-3. A real question the reference information does NOT answer, or a question clearly outside cooperative governance/schemes/agricultural support -- respond with EXACTLY this text and nothing else: "${NO_INFO_MESSAGE}"
+3. A real question the reference information does NOT answer, or a question clearly outside cooperative governance/schemes/agricultural support -- respond with EXACTLY this text and nothing else, translated into the caller's language: "${NO_INFO_MESSAGE}"
 
 Never invent facts, numbers, scheme names, or legal details not present in the reference information. Never contradict the reference information using outside knowledge.
 
@@ -92,4 +109,5 @@ module.exports = {
   searchDocuments,
   buildPrompt,
   NO_INFO_MESSAGE,
+  SIMILARITY_THRESHOLD,
 };
