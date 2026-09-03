@@ -172,6 +172,90 @@ async function translateText(text, targetLanguage) {
   return generateAnswer(prompt);
 }
 
+// For live phone calls: waiting for the full answer before speaking any of
+// it reads as dead air on a call. streamGenerateContent (alt=sse) sends text
+// as it's generated -- each SSE line is a JSON object with
+// candidates[0].content.parts[0].text holding that chunk's piece of text.
+// Sequential fallback (not raced, unlike generateAnswer) because racing
+// several live streams and discarding the losers mid-generation is real
+// complexity for no benefit here -- once a model starts streaming
+// successfully, commit to it; only move to the next model if a model fails
+// before sending any text at all.
+async function streamAnswer(prompt, onDelta) {
+  return withQueue(async () => {
+    let lastError;
+
+    for (const model of GENERATION_MODELS) {
+      let res;
+      try {
+        res = await fetchWithTimeout(
+          `${BASE_URL}/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+            }),
+          }
+        );
+      } catch (networkErr) {
+        lastError = networkErr;
+        continue;
+      }
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        lastError = new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
+        if (res.status !== 429 && res.status !== 404 && res.status !== 503) throw lastError;
+        continue;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let gotAnyText = false;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let eventEnd;
+          while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
+            const line = buffer.slice(0, eventEnd).trim();
+            buffer = buffer.slice(eventEnd + 2);
+            if (!line.startsWith('data:')) continue;
+
+            const jsonStr = line.slice(5).trim();
+            if (!jsonStr) continue;
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                gotAnyText = true;
+                onDelta(text);
+              }
+            } catch {
+              // partial/malformed line -- skip, not fatal
+            }
+          }
+        }
+      } catch (streamErr) {
+        if (gotAnyText) throw streamErr; // already sent partial output, can't fall back cleanly
+        lastError = streamErr;
+        continue;
+      }
+
+      if (gotAnyText) return;
+      lastError = new Error(`Gemini ${model} stream produced no text`);
+    }
+
+    throw lastError;
+  });
+}
+
 // "lite"/"preview" model variants are reduced-capability and confirmed bad
 // at this specifically: gemini-3.1-flash-lite returned 200 OK but just
 // echoed the raw audio bytes back as garbled text instead of transcribing
@@ -244,4 +328,4 @@ async function synthesizeSpeech(text) {
   });
 }
 
-module.exports = { embedText, generateAnswer, translateText, transcribeAudio, synthesizeSpeech };
+module.exports = { embedText, generateAnswer, translateText, transcribeAudio, synthesizeSpeech, streamAnswer };

@@ -1,5 +1,5 @@
 const express = require('express');
-const { embedText, generateAnswer } = require('../services/gemini');
+const { embedText, streamAnswer } = require('../services/gemini');
 const { searchDocuments, buildPrompt } = require('../services/rag');
 
 const router = express.Router();
@@ -33,14 +33,14 @@ router.get('/models', (req, res) => {
 // Bolna's voice agent calls this exactly like OpenAI's chat completions API
 // on every conversation turn, sending the full message history. We only use
 // the latest user turn, running it through the same RAG pipeline as the
-// app's text chat (embed -> search -> prompt -> generate), then stream the
-// answer back in the required OpenAI SSE delta format.
-// ponytail: this sends the whole answer as one chunk, not real token-by-
-// token streaming (our Gemini calls aren't streaming-based) -- valid per
-// the OpenAI SSE protocol, but the caller hears nothing until the full RAG
-// answer is ready. Upgrade to Gemini's streamGenerateContent if live-call
-// latency becomes a real complaint.
+// app's text chat (embed -> search -> prompt), then genuinely stream the
+// answer token-by-token as Gemini generates it -- real-time, not a single
+// chunk after the full answer is ready, so the caller doesn't sit through
+// dead air on a live call.
 router.post('/chat/completions', async (req, res) => {
+  const id = `chatcmpl-${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+
   try {
     const { messages = [] } = req.body;
     const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
@@ -54,10 +54,6 @@ router.post('/chat/completions', async (req, res) => {
     const retrievedChunks = await searchDocuments(queryEmbedding, 5);
     const relevantChunks = retrievedChunks.filter(c => c.similarity >= SIMILARITY_THRESHOLD);
     const prompt = buildPrompt(userText, relevantChunks);
-    const answer = await generateAnswer(prompt);
-
-    const id = `chatcmpl-${Date.now()}`;
-    const created = Math.floor(Date.now() / 1000);
 
     res.set({
       'Content-Type': 'text/event-stream',
@@ -65,25 +61,25 @@ router.post('/chat/completions', async (req, res) => {
       Connection: 'keep-alive',
     });
 
-    res.write(
-      `data: ${JSON.stringify({
-        id,
-        object: 'chat.completion.chunk',
-        created,
-        model: MODEL_NAME,
-        choices: [{ index: 0, delta: { role: 'assistant', content: answer }, finish_reason: null }],
-      })}\n\n`
-    );
+    const chunk = (delta, finish_reason = null) =>
+      res.write(
+        `data: ${JSON.stringify({
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model: MODEL_NAME,
+          choices: [{ index: 0, delta, finish_reason }],
+        })}\n\n`
+      );
 
-    res.write(
-      `data: ${JSON.stringify({
-        id,
-        object: 'chat.completion.chunk',
-        created,
-        model: MODEL_NAME,
-        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-      })}\n\n`
-    );
+    chunk({ role: 'assistant' });
+    try {
+      await streamAnswer(prompt, delta => chunk({ content: delta }));
+    } catch (streamErr) {
+      console.error('streamAnswer failed mid-request:', streamErr);
+      chunk({ content: "Sorry, I'm having trouble answering right now. Please try again." });
+    }
+    chunk({}, 'stop');
 
     res.write('data: [DONE]\n\n');
     res.end();
