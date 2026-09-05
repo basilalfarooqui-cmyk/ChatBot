@@ -1,7 +1,7 @@
 const express = require('express');
 const { embedText, generateAnswer } = require('../services/gemini');
 const { translateText } = require('../services/translate');
-const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD } = require('../services/rag');
+const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD, MATCH_COUNT } = require('../services/rag');
 
 const router = express.Router();
 
@@ -36,7 +36,7 @@ router.post('/', async (req, res) => {
       language === 'en' || looksEnglish(message) ? message : await translateText(message, 'English');
 
     const queryEmbedding = await embedText(englishMessage);
-    const retrievedChunks = await searchDocuments(queryEmbedding, 5);
+    const retrievedChunks = await searchDocuments(queryEmbedding, MATCH_COUNT);
     const relevantChunks = retrievedChunks.filter(c => c.similarity >= SIMILARITY_THRESHOLD);
 
     const prompt = buildPrompt(englishMessage, relevantChunks);

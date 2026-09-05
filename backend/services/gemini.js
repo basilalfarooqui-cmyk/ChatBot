@@ -178,7 +178,16 @@ async function generateAnswer(prompt) {
 
 async function translateText(text, targetLanguage) {
   const prompt = `Translate the following text to ${targetLanguage}. Return ONLY the translated text, nothing else, no explanation: ${text}`;
-  return raceModels([{ text: prompt }], RELIABLE_MODELS);
+  try {
+    return await raceModels([{ text: prompt }], RELIABLE_MODELS);
+  } catch (reliableErr) {
+    // All 4 reliable models exhausted/down at once (confirmed live: a burst
+    // of requests hit this key's per-minute cap on all of them
+    // simultaneously) -- a degraded translation from a weaker model still
+    // beats a hard failure with no reply at all.
+    const fallbackModels = GENERATION_MODELS.filter(m => !RELIABLE_MODELS.includes(m));
+    return raceModels([{ text: prompt }], fallbackModels);
+  }
 }
 
 // For live phone calls: waiting for the full answer before speaking any of

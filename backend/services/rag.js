@@ -1,9 +1,16 @@
 const { embedText } = require('./gemini');
 const { supabase } = require('./supabase');
 
-function chunkText(text, chunkSize = 300) {
+// Confirmed live on a real document: a 300-word chunk cut off mid-sentence
+// right at "1. Ministry of Cooperation (MoC): a. To convene the meetings
+// of the" -- the actual role details were the next chunk, which didn't
+// score highly enough for the matching query to be retrieved. Documents
+// with long numbered/lettered stakeholder lists (common in government
+// SOPs) need enough room per chunk to hold a full list item, and enough
+// overlap that a split mid-list still carries context into the next chunk.
+function chunkText(text, chunkSize = 600) {
   const words = text.split(/\s+/).filter(Boolean);
-  const overlap = 50;
+  const overlap = 150;
   const chunks = [];
 
   if (words.length <= chunkSize) {
@@ -73,6 +80,15 @@ const NO_INFO_MESSAGE =
 // from whatever's retrieved.
 const SIMILARITY_THRESHOLD = 0;
 
+// Measured directly: a real answer-bearing chunk ranked 6th (0.5905)
+// against a query asking exactly the question it answers, with only a
+// 0.014 score gap to the top result -- these are near-ties among
+// topically-similar chunks from the same document, not a clean
+// relevant/irrelevant split. A top-5 window was cutting off genuine
+// matches that scored a hair below other same-topic chunks. 10 gives
+// enough headroom for that without flooding the prompt.
+const MATCH_COUNT = 10;
+
 // A hard similarity threshold alone can't reliably tell "greeting" apart from
 // "real question" when the DB is small -- unrelated short text (e.g. "hi")
 // still lands above 0.3 cosine similarity against almost anything, purely
@@ -110,4 +126,5 @@ module.exports = {
   buildPrompt,
   NO_INFO_MESSAGE,
   SIMILARITY_THRESHOLD,
+  MATCH_COUNT,
 };

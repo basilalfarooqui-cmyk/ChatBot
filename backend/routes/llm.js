@@ -1,6 +1,6 @@
 const express = require('express');
 const { embedText, streamAnswer } = require('../services/gemini');
-const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD } = require('../services/rag');
+const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD, MATCH_COUNT } = require('../services/rag');
 
 const router = express.Router();
 
@@ -50,7 +50,7 @@ router.post('/chat/completions', async (req, res) => {
     }
 
     const queryEmbedding = await embedText(userText);
-    const retrievedChunks = await searchDocuments(queryEmbedding, 5);
+    const retrievedChunks = await searchDocuments(queryEmbedding, MATCH_COUNT);
     const relevantChunks = retrievedChunks.filter(c => c.similarity >= SIMILARITY_THRESHOLD);
     // buildPrompt itself now instructs Gemini to reply in the caller's own
     // language -- a no-op for the app's text chat (which always sends it
