@@ -103,6 +103,15 @@ const GENERATION_MODELS = [
   'gemini-3-flash-preview',
 ];
 
+// "lite"/"preview" model variants are reduced-capability and confirmed bad
+// at precision tasks: gemini-3.1-flash-lite returned 200 OK but just echoed
+// raw audio bytes back as garbled text instead of transcribing it (no
+// error, just wrong output). Translation has the same failure mode --
+// wrong/partial output is worse than a slower correct one. Used for
+// anything that needs faithful, exact instruction-following rather than
+// open-ended generation, where the full flash models are more reliable.
+const RELIABLE_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
+
 async function attemptModel(model, parts) {
   const startedAt = Date.now();
   let res;
@@ -169,7 +178,7 @@ async function generateAnswer(prompt) {
 
 async function translateText(text, targetLanguage) {
   const prompt = `Translate the following text to ${targetLanguage}. Return ONLY the translated text, nothing else, no explanation: ${text}`;
-  return generateAnswer(prompt);
+  return raceModels([{ text: prompt }], RELIABLE_MODELS);
 }
 
 // For live phone calls: waiting for the full answer before speaking any of
@@ -273,18 +282,11 @@ async function streamAnswer(prompt, onDelta) {
   });
 }
 
-// "lite"/"preview" model variants are reduced-capability and confirmed bad
-// at this specifically: gemini-3.1-flash-lite returned 200 OK but just
-// echoed the raw audio bytes back as garbled text instead of transcribing
-// it -- no error, just wrong output, which is worse than a clean failure.
-// Restrict audio transcription to the full flash models, which are
-// documented as fully multimodal.
-const TRANSCRIPTION_MODELS = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-flash-latest'];
-
 // Same multimodal generateContent endpoint the text models use -- Gemini
 // accepts an audio part alongside the text prompt and transcribes it
 // directly, so this reuses the exact same model-racing/fallback machinery
 // as generateAnswer instead of needing a separate dedicated STT provider.
+// Restricted to RELIABLE_MODELS -- see that constant's comment.
 async function transcribeAudio(base64Audio, mimeType, languageHint) {
   const languageLine = languageHint ? ` The speaker is using ${languageHint}.` : '';
   return raceModels(
@@ -292,7 +294,7 @@ async function transcribeAudio(base64Audio, mimeType, languageHint) {
       { text: `Transcribe exactly what is said in this audio.${languageLine} Return ONLY the transcribed text, nothing else, no explanation.` },
       { inlineData: { mimeType, data: base64Audio } },
     ],
-    TRANSCRIPTION_MODELS
+    RELIABLE_MODELS
   );
 }
 
