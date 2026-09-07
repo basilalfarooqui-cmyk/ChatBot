@@ -23,6 +23,7 @@ function createMockPlayer() {
   const listeners = new Set();
   const player = {
     playing: false,
+    isLoaded: true,
     replace: jest.fn(source => {
       player.__source = source;
     }),
