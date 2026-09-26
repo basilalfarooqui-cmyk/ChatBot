@@ -17,7 +17,7 @@ const router = express.Router();
 // of code needed. Remove this override once quota/model reliability is
 // sorted -- this is NOT the real per-user-language behavior, just a
 // predictable default for recording.
-const FORCE_LANGUAGE = process.env.FORCE_LANGUAGE || 'English';
+const FORCE_LANGUAGE = process.env.FORCE_LANGUAGE || 'Hindi';
 
 // The app's selected language doesn't guarantee what script the user
 // actually typed in -- someone with Telugu selected can still type in
