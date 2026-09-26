@@ -1,11 +1,19 @@
 const express = require('express');
-const { embedText, streamAnswer } = require('../services/gemini');
+const { embedText, streamAnswer, translateText } = require('../services/gemini');
 const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD, MATCH_COUNT } = require('../services/rag');
 
 const router = express.Router();
 
 const MODEL_NAME = 'sih-chatbot-rag';
 const AUTH_TOKEN = process.env.CUSTOM_LLM_SECRET;
+
+// Same TEMPORARY DEMO OVERRIDE as the app's /api/chat -- see that file's
+// comment for the full reasoning. Forces every call answer to one fixed
+// language regardless of what the caller actually spoke, since buildPrompt's
+// language-matching instruction is unreliable while all 4 reliable Gemini
+// models are quota-exhausted. Change FORCE_LANGUAGE in Railway's Variables
+// tab to switch languages between takes.
+const FORCE_LANGUAGE = process.env.FORCE_LANGUAGE || 'English';
 
 // Bolna's voice agent authenticates with a Bearer token, same as calling
 // real OpenAI -- this is a secret we chose ourselves (CUSTOM_LLM_SECRET),
@@ -32,10 +40,10 @@ router.get('/models', (req, res) => {
 // Bolna's voice agent calls this exactly like OpenAI's chat completions API
 // on every conversation turn, sending the full message history. We only use
 // the latest user turn, running it through the same RAG pipeline as the
-// app's text chat (embed -> search -> prompt), then genuinely stream the
-// answer token-by-token as Gemini generates it -- real-time, not a single
-// chunk after the full answer is ready, so the caller doesn't sit through
-// dead air on a live call.
+// app's text chat (embed -> search -> prompt). While FORCE_LANGUAGE is
+// active (see above), the full answer is collected and translated before
+// sending -- real token-by-token streaming is temporarily off in exchange
+// for guaranteed language correctness; remove the override to restore it.
 router.post('/chat/completions', async (req, res) => {
   const id = `chatcmpl-${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
@@ -77,7 +85,17 @@ router.post('/chat/completions', async (req, res) => {
 
     chunk({ role: 'assistant' });
     try {
-      await streamAnswer(prompt, delta => chunk({ content: delta }));
+      // Collect the full answer first instead of forwarding deltas live --
+      // this sacrifices some of the real-time streaming feel (there's a
+      // pause while both generation and the correction below finish), but
+      // an always-on translation step is what actually enforces
+      // FORCE_LANGUAGE even when streamAnswer itself gets the language
+      // wrong under today's quota exhaustion. Same tradeoff accepted for
+      // the app's /api/chat.
+      let fullAnswer = '';
+      await streamAnswer(prompt, delta => { fullAnswer += delta; });
+      const finalAnswer = await translateText(fullAnswer, FORCE_LANGUAGE);
+      chunk({ content: finalAnswer });
     } catch (streamErr) {
       console.error('streamAnswer failed mid-request:', streamErr);
       chunk({ content: "Sorry, I'm having trouble answering right now. Please try again." });
