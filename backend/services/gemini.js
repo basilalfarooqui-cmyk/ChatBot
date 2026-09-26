@@ -121,7 +121,7 @@ async function attemptModel(model, parts) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.1, maxOutputTokens: 2048 },
       }),
     });
   } catch (networkErr) {
@@ -139,7 +139,7 @@ async function attemptModel(model, parts) {
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error(`Gemini ${model} returned no text: ${JSON.stringify(data)}`);
-  return text.trim();
+  return { model, text: text.trim() };
 }
 
 // A strictly sequential fallback meant one hung model (no error, just slow)
@@ -163,31 +163,69 @@ function raceModels(parts, models = GENERATION_MODELS) {
         })
     );
 
+    // Promise.any resolving early does NOT cancel the other staggered
+    // attempts -- they keep firing in the background. Confirmed live: this
+    // let a later chat request's Gemini calls actually overlap with the
+    // previous request's still-in-flight "losing" attempts, because the
+    // withQueue task above previously resolved (and let the queue advance
+    // to the next call) as soon as Promise.any settled, not waiting for
+    // the stragglers. That defeats the whole point of the queue, which
+    // exists specifically to stop concurrent requests from competing for
+    // the same per-minute quota at once. awaiting settledAttempts here
+    // still returns the winner to the caller as soon as it's ready, but
+    // holds the queue open until every attempt from this call has finished.
+    const settledAttempts = Promise.allSettled(attempts);
     try {
-      return await Promise.any(attempts);
+      const winner = await Promise.any(attempts);
+      await settledAttempts;
+      return winner;
     } catch (aggregateErr) {
+      await settledAttempts;
       const messages = (aggregateErr.errors ?? [aggregateErr]).map(e => e.message).join(' | ');
       throw new Error(`All Gemini models failed: ${messages}`);
     }
   });
 }
 
+// Confirmed live: gemini-3.1-flash-lite won the race (fastest response) on a
+// real chat request and simply ignored buildPrompt's "respond in the
+// caller's language" instruction -- replied in Hindi despite the message
+// being confirmed clean English going in. Not a translation bug; a lite
+// model failing to follow a core instruction. This is the same
+// lite/preview unreliability already found for transcription and
+// translation, just not yet applied here even though language-matching is
+// core functionality for every chat reply, not optional. Try
+// RELIABLE_MODELS first; only fall through to the full pool (lite/preview
+// included) if all 4 reliable ones are down -- a slower correct answer
+// beats a fast wrong-language one, but total unavailability is worse than
+// a degraded answer.
 async function generateAnswer(prompt) {
-  return raceModels([{ text: prompt }]);
+  let result;
+  try {
+    result = await raceModels([{ text: prompt }], RELIABLE_MODELS);
+  } catch (reliableErr) {
+    const fallbackModels = GENERATION_MODELS.filter(m => !RELIABLE_MODELS.includes(m));
+    result = await raceModels([{ text: prompt }], fallbackModels);
+  }
+  console.log(`[gemini] generateAnswer answered by ${result.model}`);
+  return result.text;
 }
 
 async function translateText(text, targetLanguage) {
   const prompt = `Translate the following text to ${targetLanguage}. Return ONLY the translated text, nothing else, no explanation: ${text}`;
+  let result;
   try {
-    return await raceModels([{ text: prompt }], RELIABLE_MODELS);
+    result = await raceModels([{ text: prompt }], RELIABLE_MODELS);
   } catch (reliableErr) {
     // All 4 reliable models exhausted/down at once (confirmed live: a burst
     // of requests hit this key's per-minute cap on all of them
     // simultaneously) -- a degraded translation from a weaker model still
     // beats a hard failure with no reply at all.
     const fallbackModels = GENERATION_MODELS.filter(m => !RELIABLE_MODELS.includes(m));
-    return raceModels([{ text: prompt }], fallbackModels);
+    result = await raceModels([{ text: prompt }], fallbackModels);
   }
+  console.log(`[gemini] translateText answered by ${result.model}`);
+  return result.text;
 }
 
 // For live phone calls: waiting for the full answer before speaking any of
@@ -199,95 +237,115 @@ async function translateText(text, targetLanguage) {
 // complexity for no benefit here -- once a model starts streaming
 // successfully, commit to it; only move to the next model if a model fails
 // before sending any text at all.
-async function streamAnswer(prompt, onDelta) {
-  return withQueue(async () => {
-    let lastError;
+async function attemptStreamModels(models, prompt, onDelta) {
+  let lastError;
+  let gotAnyTextOverall = false;
 
-    for (const model of GENERATION_MODELS) {
-      const startedAt = Date.now();
-      let res;
-      try {
-        res = await fetchWithTimeout(
-          `${BASE_URL}/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
-            }),
-          }
-        );
-      } catch (networkErr) {
-        console.log(`[gemini-stream] ${model} threw after ${Date.now() - startedAt}ms: ${networkErr.message}`);
-        lastError = networkErr;
-        continue;
-      }
-
-      console.log(`[gemini-stream] ${model} responded ${res.status} in ${Date.now() - startedAt}ms`);
-
-      if (!res.ok) {
-        const errBody = await res.text();
-        lastError = new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
-        if (res.status !== 429 && res.status !== 404 && res.status !== 503) throw lastError;
-        continue;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let gotAnyText = false;
-
-      const processLine = line => {
-        if (!line.startsWith('data:')) return;
-        const jsonStr = line.slice(5).trim();
-        if (!jsonStr) return;
-        try {
-          const parsed = JSON.parse(jsonStr);
-          const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text) {
-            gotAnyText = true;
-            onDelta(text);
-          }
-        } catch {
-          // partial/malformed line -- skip, not fatal
+  for (const model of models) {
+    const startedAt = Date.now();
+    let res;
+    try {
+      res = await fetchWithTimeout(
+        `${BASE_URL}/${model}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.1, maxOutputTokens: 2048 },
+          }),
         }
-      };
-
-      // Gemini terminates each SSE event with \r\n\r\n, not \n\n -- a plain
-      // '\n\n' search never matches, so every event silently piled up into
-      // one unparseable blob instead of being split and processed as it
-      // arrived. This matches \n\n, \r\n\r\n, or any mix of the two.
-      const EVENT_BOUNDARY = /\r?\n\r?\n/;
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          let match;
-          while ((match = buffer.match(EVENT_BOUNDARY))) {
-            processLine(buffer.slice(0, match.index).trim());
-            buffer = buffer.slice(match.index + match[0].length);
-          }
-        }
-        // The final event often has no trailing boundary before the
-        // connection closes -- without this, that last (sometimes only)
-        // chunk of real text sits unprocessed in the buffer and gets
-        // silently dropped.
-        if (buffer.trim()) processLine(buffer.trim());
-      } catch (streamErr) {
-        if (gotAnyText) throw streamErr; // already sent partial output, can't fall back cleanly
-        lastError = streamErr;
-        continue;
-      }
-
-      if (gotAnyText) return;
-      lastError = new Error(`Gemini ${model} stream produced no text`);
+      );
+    } catch (networkErr) {
+      console.log(`[gemini-stream] ${model} threw after ${Date.now() - startedAt}ms: ${networkErr.message}`);
+      lastError = networkErr;
+      continue;
     }
 
-    throw lastError;
+    console.log(`[gemini-stream] ${model} responded ${res.status} in ${Date.now() - startedAt}ms`);
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      lastError = new Error(`Gemini ${model} failed (${res.status}): ${errBody}`);
+      if (res.status !== 429 && res.status !== 404 && res.status !== 503) throw lastError;
+      continue;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let gotAnyText = false;
+
+    const processLine = line => {
+      if (!line.startsWith('data:')) return;
+      const jsonStr = line.slice(5).trim();
+      if (!jsonStr) return;
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          gotAnyText = true;
+          gotAnyTextOverall = true;
+          onDelta(text);
+        }
+      } catch {
+        // partial/malformed line -- skip, not fatal
+      }
+    };
+
+    // Gemini terminates each SSE event with \r\n\r\n, not \n\n -- a plain
+    // '\n\n' search never matches, so every event silently piled up into
+    // one unparseable blob instead of being split and processed as it
+    // arrived. This matches \n\n, \r\n\r\n, or any mix of the two.
+    const EVENT_BOUNDARY = /\r?\n\r?\n/;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let match;
+        while ((match = buffer.match(EVENT_BOUNDARY))) {
+          processLine(buffer.slice(0, match.index).trim());
+          buffer = buffer.slice(match.index + match[0].length);
+        }
+      }
+      // The final event often has no trailing boundary before the
+      // connection closes -- without this, that last (sometimes only)
+      // chunk of real text sits unprocessed in the buffer and gets
+      // silently dropped.
+      if (buffer.trim()) processLine(buffer.trim());
+    } catch (streamErr) {
+      if (gotAnyText) throw streamErr; // already sent partial output, can't fall back cleanly
+      lastError = streamErr;
+      continue;
+    }
+
+    if (gotAnyText) return;
+    lastError = new Error(`Gemini ${model} stream produced no text`);
+  }
+
+  lastError.gotAnyText = gotAnyTextOverall;
+  throw lastError;
+}
+
+// Same reasoning as generateAnswer: a lite/preview model can produce fluent,
+// on-topic text while ignoring the "respond in caller's language"
+// instruction, which matters just as much on a phone call as in the app.
+// Try RELIABLE_MODELS first; only fall through to lite/preview if none of
+// the 4 reliable models produced any text at all -- if some text was
+// already streamed to the caller, don't retry with a different model, that
+// would produce a garbled double-answer.
+async function streamAnswer(prompt, onDelta) {
+  return withQueue(async () => {
+    try {
+      await attemptStreamModels(RELIABLE_MODELS, prompt, onDelta);
+    } catch (reliableErr) {
+      if (reliableErr.gotAnyText) throw reliableErr;
+      const fallbackModels = GENERATION_MODELS.filter(m => !RELIABLE_MODELS.includes(m));
+      await attemptStreamModels(fallbackModels, prompt, onDelta);
+    }
   });
 }
 
@@ -298,13 +356,15 @@ async function streamAnswer(prompt, onDelta) {
 // Restricted to RELIABLE_MODELS -- see that constant's comment.
 async function transcribeAudio(base64Audio, mimeType, languageHint) {
   const languageLine = languageHint ? ` The speaker is using ${languageHint}.` : '';
-  return raceModels(
+  const result = await raceModels(
     [
       { text: `Transcribe exactly what is said in this audio.${languageLine} Return ONLY the transcribed text, nothing else, no explanation.` },
       { inlineData: { mimeType, data: base64Audio } },
     ],
     RELIABLE_MODELS
   );
+  console.log(`[gemini] transcribeAudio answered by ${result.model}`);
+  return result.text;
 }
 
 // Gemini's TTS models return raw PCM samples (no container/header), not a

@@ -116,6 +116,8 @@ Never invent facts, numbers, scheme names, or legal details not present in the r
 
 Message: ${userMessage}
 
+Reminder: your answer must be in the same language and script as the message above, regardless of the language of the reference information or these instructions.
+
 Answer:`;
 }
 

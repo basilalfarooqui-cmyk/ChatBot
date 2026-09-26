@@ -32,8 +32,14 @@ router.post('/', async (req, res) => {
 
     const languageName = LANGUAGE_NAMES[language] || 'English';
 
-    const englishMessage =
-      language === 'en' || looksEnglish(message) ? message : await translateText(message, 'English');
+    // "language === 'en'" describes the app's SELECTED language, not the
+    // actual script of the message -- typing or speaking Hindi while
+    // English is selected (easy via voice input) previously skipped
+    // translation entirely, so buildPrompt saw raw Hindi text and its own
+    // "match the caller's language" instruction correctly mirrored that,
+    // replying in Hindi regardless of what was selected. The only safe
+    // signal for "is this already English" is the message's own script.
+    const englishMessage = looksEnglish(message) ? message : await translateText(message, 'English');
 
     const queryEmbedding = await embedText(englishMessage);
     const retrievedChunks = await searchDocuments(queryEmbedding, MATCH_COUNT);
