@@ -5,13 +5,19 @@ const { searchDocuments, buildPrompt, SIMILARITY_THRESHOLD, MATCH_COUNT } = requ
 
 const router = express.Router();
 
-const LANGUAGE_NAMES = {
-  en: 'English', hi: 'Hindi', bn: 'Bengali', te: 'Telugu', mr: 'Marathi',
-  ta: 'Tamil', ur: 'Urdu', gu: 'Gujarati', kn: 'Kannada', or: 'Odia',
-  ml: 'Malayalam', pa: 'Punjabi', as: 'Assamese', mai: 'Maithili',
-  sat: 'Santali', ks: 'Kashmiri', ne: 'Nepali', kok: 'Konkani',
-  sd: 'Sindhi', doi: 'Dogri', mni: 'Manipuri', brx: 'Bodo', sa: 'Sanskrit',
-};
+// TEMPORARY DEMO OVERRIDE (2026-09): the app's per-request `language` field
+// is unreliable right now because all 4 reliable Gemini models are quota-
+// exhausted today, forcing every request onto weaker fallback models that
+// don't reliably follow buildPrompt's language-matching instruction. For
+// recording a stable demo video, ignore the app's per-request language
+// entirely and force one explicit output language via this env var --
+// always translated as a separate, focused call, not left up to the main
+// generation step to get right on its own. Change FORCE_LANGUAGE in
+// Railway's Variables tab to switch languages between takes, no redeploy
+// of code needed. Remove this override once quota/model reliability is
+// sorted -- this is NOT the real per-user-language behavior, just a
+// predictable default for recording.
+const FORCE_LANGUAGE = process.env.FORCE_LANGUAGE || 'English';
 
 // The app's selected language doesn't guarantee what script the user
 // actually typed in -- someone with Telugu selected can still type in
@@ -24,13 +30,11 @@ function looksEnglish(text) {
 
 router.post('/', async (req, res) => {
   try {
-    const { message, language = 'en' } = req.body;
+    const { message } = req.body;
 
     if (typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ reply: 'Message is required.' });
     }
-
-    const languageName = LANGUAGE_NAMES[language] || 'English';
 
     // "language === 'en'" describes the app's SELECTED language, not the
     // actual script of the message -- typing or speaking Hindi while
@@ -48,8 +52,12 @@ router.post('/', async (req, res) => {
     const prompt = buildPrompt(englishMessage, relevantChunks);
     const englishAnswer = await generateAnswer(prompt);
 
-    const finalAnswer =
-      language === 'en' ? englishAnswer : await translateText(englishAnswer, languageName);
+    // Always translate, even to English -- generateAnswer itself can still
+    // produce the wrong language under today's quota exhaustion (that's the
+    // root bug), so skipping this call whenever FORCE_LANGUAGE is English
+    // would let a wrong-language englishAnswer straight through
+    // uncorrected. This call is what actually enforces FORCE_LANGUAGE.
+    const finalAnswer = await translateText(englishAnswer, FORCE_LANGUAGE);
 
     return res.json({ reply: finalAnswer });
   } catch (error) {
