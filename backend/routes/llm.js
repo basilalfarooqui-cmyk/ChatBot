@@ -13,7 +13,7 @@ const AUTH_TOKEN = process.env.CUSTOM_LLM_SECRET;
 // language-matching instruction is unreliable while all 4 reliable Gemini
 // models are quota-exhausted. Change FORCE_LANGUAGE in Railway's Variables
 // tab to switch languages between takes.
-const FORCE_LANGUAGE = process.env.FORCE_LANGUAGE || 'Hindi';
+const FORCE_LANGUAGE = process.env.FORCE_LANGUAGE || 'English';
 
 // Bolna's voice agent authenticates with a Bearer token, same as calling
 // real OpenAI -- this is a secret we chose ourselves (CUSTOM_LLM_SECRET),
